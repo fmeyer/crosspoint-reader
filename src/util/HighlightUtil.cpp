@@ -98,4 +98,64 @@ bool HighlightUtil::loadHighlightsForPage(const std::string& bookPath, const uin
   return !outRanges.empty();
 }
 
+bool HighlightUtil::loadHighlights(const std::string& bookPath, std::vector<HighlightRecord>& outRecords) {
+  const std::string path = getHighlightPath(bookPath);
+  if (!Storage.exists(path.c_str())) {
+    return false;
+  }
+  HalFile file;
+  if (!Storage.openFileForRead("HLU", path, file)) {
+    return false;
+  }
+
+  uint8_t header[9];
+  while (outRecords.size() < MAX_BOOK_HIGHLIGHTS &&
+         file.read(header, sizeof(header)) == static_cast<int>(sizeof(header))) {
+    HighlightRecord rec;
+    memcpy(&rec.spineIndex, &header[0], sizeof(rec.spineIndex));
+    memcpy(&rec.pageIndex, &header[2], sizeof(rec.pageIndex));
+    memcpy(&rec.wordStart, &header[4], sizeof(rec.wordStart));
+    memcpy(&rec.wordEnd, &header[6], sizeof(rec.wordEnd));
+    const uint8_t snippetLen = header[8];
+    if (snippetLen > 0) {
+      rec.snippet.resize(snippetLen);
+      if (file.read(rec.snippet.data(), snippetLen) != snippetLen) {
+        break;  // truncated record: keep what parsed cleanly
+      }
+    }
+    outRecords.push_back(std::move(rec));
+  }
+  return !outRecords.empty();
+}
+
+bool HighlightUtil::saveAllHighlights(const std::string& bookPath, const std::vector<HighlightRecord>& records) {
+  const std::string path = getHighlightPath(bookPath);
+  if (records.empty()) {
+    if (Storage.exists(path.c_str())) {
+      return Storage.remove(path.c_str());
+    }
+    return true;
+  }
+
+  HalFile file = Storage.open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC);
+  if (!file) {
+    LOG_ERR("HLU", "Failed to rewrite %s", path.c_str());
+    return false;
+  }
+  for (const auto& rec : records) {
+    const auto len = static_cast<uint8_t>(std::min(rec.snippet.size(), MAX_SNIPPET_BYTES));
+    uint8_t header[9];
+    memcpy(&header[0], &rec.spineIndex, sizeof(rec.spineIndex));
+    memcpy(&header[2], &rec.pageIndex, sizeof(rec.pageIndex));
+    memcpy(&header[4], &rec.wordStart, sizeof(rec.wordStart));
+    memcpy(&header[6], &rec.wordEnd, sizeof(rec.wordEnd));
+    header[8] = len;
+    if (file.write(header, sizeof(header)) != sizeof(header) || file.write(rec.snippet.data(), len) != len) {
+      LOG_ERR("HLU", "Failed to write highlight record during rewrite");
+      return false;
+    }
+  }
+  return true;
+}
+
 #endif  // CROSSPOINT_HIGHLIGHT_EXPERIMENT

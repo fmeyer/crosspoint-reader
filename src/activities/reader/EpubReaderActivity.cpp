@@ -23,6 +23,7 @@
 #include "EpubReaderBookmarksActivity.h"
 #include "EpubReaderChapterSelectionActivity.h"
 #include "EpubReaderFootnotesActivity.h"
+#include "EpubReaderHighlightsActivity.h"
 #include "EpubReaderPercentSelectionActivity.h"
 #include "EpubReaderUtils.h"
 #include "KOReaderCredentialStore.h"
@@ -463,13 +464,20 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
   };
 
   switch (action) {
-    // Menu item only exists when the experiment flag is on; the case stays
+    // Menu items only exist when the experiment flag is on; the cases stay
     // unconditional so flag-off builds don't trip -Wswitch.
     case EpubReaderMenuActivity::MenuAction::HIGHLIGHT:
 #if CROSSPOINT_HIGHLIGHT_EXPERIMENT
       if (section && section->pageCount > 0 && !automaticPageTurnActive) {
         enterHighlightMode();
       }
+#endif
+      break;
+    case EpubReaderMenuActivity::MenuAction::HIGHLIGHTS:
+#if CROSSPOINT_HIGHLIGHT_EXPERIMENT
+      startActivityForResult(
+          std::make_unique<EpubReaderHighlightsActivity>(renderer, mappedInput, epub, epub->getPath()),
+          progressChangeResultHandler);
 #endif
       break;
     case EpubReaderMenuActivity::MenuAction::SELECT_CHAPTER: {
