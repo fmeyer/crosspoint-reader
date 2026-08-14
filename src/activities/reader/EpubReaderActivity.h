@@ -6,6 +6,7 @@
 #include <optional>
 
 #include "EpubReaderMenuActivity.h"
+#include "HighlightSelection.h"
 #include "ProgressMapper.h"
 #include "activities/Activity.h"
 
@@ -68,6 +69,23 @@ class EpubReaderActivity final : public Activity {
   // Footnote navigation
   void navigateToHref(const std::string& href, bool savePosition = false);
   void restoreSavedPosition();
+
+#if CROSSPOINT_HIGHLIGHT_EXPERIMENT
+  // Side-button text highlight mode (experiment). The detector runs every loop to
+  // catch the PageBack+PageForward chord; the selection model exists only while
+  // the mode is active.
+  SideButtonChordDetector chordDetector;
+  std::unique_ptr<HighlightSelection> highlight;
+  bool highlightIncrementalPending = false;
+  bool showHighlightMessage = false;
+  unsigned long highlightMessageTime = 0UL;
+  void enterHighlightMode();
+  void exitHighlightMode();
+  void handleHighlightModeInput();
+  bool highlightModeActive() const { return static_cast<bool>(highlight); }
+#else
+  static constexpr bool highlightModeActive() { return false; }
+#endif
 
  public:
   explicit EpubReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::unique_ptr<Epub> epub)

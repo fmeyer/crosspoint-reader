@@ -1,0 +1,24 @@
+#pragma once
+
+#if CROSSPOINT_HIGHLIGHT_EXPERIMENT
+
+#include <cstdint>
+#include <string>
+
+// Persists text highlights per book as an append-only binary file:
+// /.crosspoint/highlights/<flattened-book-name>.hl
+// Record layout (little-endian): u16 spineIndex, u16 pageIndex, u16 wordStart,
+// u16 wordEnd, u8 snippetLen, snippetLen bytes of UTF-8 snippet text.
+// The snippet is the durable ground truth: word indices are only valid for the
+// layout settings active when the highlight was created.
+class HighlightUtil {
+ public:
+  static std::string getHighlightsDir();
+  static std::string getHighlightPath(const std::string& bookPath);
+  static bool saveHighlight(const std::string& bookPath, uint16_t spineIndex, uint16_t pageIndex, uint16_t wordStart,
+                            uint16_t wordEnd, const std::string& snippet);
+
+  static constexpr size_t MAX_SNIPPET_BYTES = 120;
+};
+
+#endif  // CROSSPOINT_HIGHLIGHT_EXPERIMENT

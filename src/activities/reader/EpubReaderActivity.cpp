@@ -35,6 +35,7 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/BookmarkUtil.h"
+#include "util/HighlightUtil.h"
 #include "util/ScreenshotUtil.h"
 
 namespace {
@@ -196,6 +197,13 @@ void EpubReaderActivity::loop() {
     return;
   }
 
+#if CROSSPOINT_HIGHLIGHT_EXPERIMENT
+  if (highlight) {
+    handleHighlightModeInput();
+    return;
+  }
+#endif
+
   // End-of-Book screen reached (currentSpineIndex == spine count) means the book is
   // finished. Two independent finished-book features key off this same condition.
   const bool atEndOfBook = currentSpineIndex > 0 && currentSpineIndex >= epub->getSpineItemsCount();
@@ -256,6 +264,13 @@ void EpubReaderActivity::loop() {
     requestUpdate();
   }
 
+#if CROSSPOINT_HIGHLIGHT_EXPERIMENT
+  if (showHighlightMessage && (millis() - highlightMessageTime) >= ReaderUtils::BOOKMARK_MESSAGE_DURATION_MS) {
+    showHighlightMessage = false;
+    requestUpdate();
+  }
+#endif
+
   // Enter reader menu activity.
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     if (ignoreNextConfirmRelease) {
@@ -312,7 +327,38 @@ void EpubReaderActivity::loop() {
     return;
   }
 
+#if CROSSPOINT_HIGHLIGHT_EXPERIMENT
+  // Chord detection has to run in front of the page-turn logic: with press-edge
+  // page turns the first button of a chord would otherwise turn the page before
+  // the second button can arrive, so singles are deferred by the chord window and
+  // re-emitted here as page turns.
+  ReaderUtils::PageTurnResult turn{false, false, false};
+  {
+    const bool deferSingles = SETTINGS.longPressButtonBehavior == SETTINGS.OFF;
+    switch (chordDetector.update(mappedInput, deferSingles)) {
+      case SideButtonChordDetector::Event::Chord:
+        if (section && section->pageCount > 0 && !automaticPageTurnActive) {
+          enterHighlightMode();
+        }
+        return;
+      case SideButtonChordDetector::Event::SingleBack:
+        turn.prev = true;
+        break;
+      case SideButtonChordDetector::Event::SingleForward:
+        turn.next = true;
+        break;
+      case SideButtonChordDetector::Event::None:
+        if (!chordDetector.isIdle()) {
+          return;  // chord forming, or button releases being swallowed
+        }
+        turn = ReaderUtils::detectPageTurn(mappedInput);
+        break;
+    }
+  }
+  const auto [prevTriggered, nextTriggered, fromTilt] = turn;
+#else
   const auto [prevTriggered, nextTriggered, fromTilt] = ReaderUtils::detectPageTurn(mappedInput);
+#endif
   if (!prevTriggered && !nextTriggered) {
     return;
   }
@@ -686,6 +732,18 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     return;
   }
 
+#if CROSSPOINT_HIGHLIGHT_EXPERIMENT
+  // Selection-only change: the framebuffer still holds the rendered page, so
+  // XOR-invert the selection diff in place and push one fast refresh — no SD
+  // reload, no page re-render.
+  if (highlight && highlight->isBuilt() && highlightIncrementalPending) {
+    highlightIncrementalPending = false;
+    highlight->repaintDiff(renderer);
+    renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+    return;
+  }
+#endif
+
   const auto showPendingSyncSaveError = [this]() {
     if (!pendingSyncSaveError) return;
     pendingSyncSaveError = false;
@@ -866,6 +924,12 @@ void EpubReaderActivity::render(RenderLock&& lock) {
   if (showBookmarkMessage) {
     GUI.drawPopup(renderer, tr(STR_BOOKMARK_ADDED));
   }
+
+#if CROSSPOINT_HIGHLIGHT_EXPERIMENT
+  if (showHighlightMessage) {
+    GUI.drawPopup(renderer, tr(STR_HIGHLIGHT_SAVED));
+  }
+#endif
 }
 
 void EpubReaderActivity::silentIndexNextChapterIfNeeded(const uint16_t viewportWidth, const uint16_t viewportHeight) {
@@ -916,10 +980,24 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   const auto tPrewarm = millis();
 
   // Force special handling for pages with images when anti-aliasing is on
-  bool imagePageWithAA = page->hasImages() && SETTINGS.textAntiAliasing;
+  bool imagePageWithAA = page->hasImages() && SETTINGS.textAntiAliasing && !highlightModeActive();
 
   page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
   renderStatusBar();
+
+#if CROSSPOINT_HIGHLIGHT_EXPERIMENT
+  // Build the selection model from the live Page (it is freed at the end of this
+  // function) and invert the current selection into the fresh BW render.
+  if (highlight) {
+    if (!highlight->isBuilt() && !highlight->wasBuildAttempted()) {
+      highlight->buildFromPage(*page, renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop,
+                               SETTINGS.getReaderLineCompression());
+    }
+    if (highlight->isBuilt()) {
+      highlight->paintCurrent(renderer);
+    }
+  }
+#endif
   const auto tBwRender = millis();
 
   if (imagePageWithAA) {
@@ -953,7 +1031,7 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   // per plane, but renderCharImpl culls out-of-band glyphs before decode so the
   // cost stays close to one render. Both text (drawPixel) and images
   // (DirectPixelWriter) honor the active strip target.
-  if (SETTINGS.textAntiAliasing && renderer.supportsStripGrayscale()) {
+  if (SETTINGS.textAntiAliasing && !highlightModeActive() && renderer.supportsStripGrayscale()) {
     constexpr int STRIP_ROWS = 80;
     const int gh = renderer.getDisplayHeight();
     const int gwBytes = renderer.getDisplayWidthBytes();
@@ -1006,7 +1084,7 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   } else {
     // Fallback path for a controller without strip support. grayscale rendering
     // TODO: Only do this if font supports it
-    if (SETTINGS.textAntiAliasing) {
+    if (SETTINGS.textAntiAliasing && !highlightModeActive()) {
       // Save the BW frame before the grayscale passes overwrite it, restore
       // after. Only needed when grayscale actually renders.
       renderer.storeBwBuffer();
@@ -1143,6 +1221,75 @@ void EpubReaderActivity::restoreSavedPosition() {
   }
   requestUpdate();
 }
+
+#if CROSSPOINT_HIGHLIGHT_EXPERIMENT
+void EpubReaderActivity::enterHighlightMode() {
+  highlight = makeUniqueNoThrow<HighlightSelection>();
+  if (!highlight) {
+    LOG_ERR("ERS", "OOM: HighlightSelection");
+    return;
+  }
+  LOG_DBG("ERS", "Entering highlight mode");
+  highlightIncrementalPending = false;
+  showBookmarkMessage = false;
+  requestUpdate();  // full render: builds the word model and paints the first word
+}
+
+void EpubReaderActivity::exitHighlightMode() {
+  LOG_DBG("ERS", "Exiting highlight mode");
+  highlight.reset();
+  highlightIncrementalPending = false;
+  // The mode accumulates FAST_REFRESH inversions; force a HALF_REFRESH on the
+  // restore render to clear ghosting (and bring anti-aliasing back).
+  pagesUntilFullRefresh = 1;
+  requestUpdate();
+}
+
+void EpubReaderActivity::handleHighlightModeInput() {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+    exitHighlightMode();
+    return;
+  }
+
+  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    if (highlight->isBuilt() && section) {
+      if (HighlightUtil::saveHighlight(epub->getPath(), static_cast<uint16_t>(currentSpineIndex),
+                                       static_cast<uint16_t>(section->currentPage), highlight->selectionStart(),
+                                       highlight->selectionEnd(), highlight->selectedText())) {
+        showHighlightMessage = true;
+        highlightMessageTime = millis();
+      }
+    }
+    exitHighlightMode();
+    return;
+  }
+
+  // The entry render found nothing selectable (image-only or empty page).
+  if (highlight->wasBuildAttempted() && !highlight->isBuilt()) {
+    exitHighlightMode();
+    return;
+  }
+
+  bool changed = false;
+  switch (chordDetector.update(mappedInput, true)) {
+    case SideButtonChordDetector::Event::Chord:
+      changed = highlight->sentenceHop();
+      break;
+    case SideButtonChordDetector::Event::SingleForward:
+      changed = highlight->onSinglePress(true);
+      break;
+    case SideButtonChordDetector::Event::SingleBack:
+      changed = highlight->onSinglePress(false);
+      break;
+    case SideButtonChordDetector::Event::None:
+      break;
+  }
+  if (changed && highlight->isBuilt()) {
+    highlightIncrementalPending = true;
+    requestUpdate();
+  }
+}
+#endif  // CROSSPOINT_HIGHLIGHT_EXPERIMENT
 
 void EpubReaderActivity::addBookmark() {
   if (!section || !epub) {
