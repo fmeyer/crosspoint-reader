@@ -60,4 +60,42 @@ bool HighlightUtil::saveHighlight(const std::string& bookPath, const uint16_t sp
   return true;
 }
 
+bool HighlightUtil::loadHighlightsForPage(const std::string& bookPath, const uint16_t spineIndex,
+                                          const uint16_t pageIndex,
+                                          std::vector<std::pair<uint16_t, uint16_t>>& outRanges) {
+  const std::string path = getHighlightPath(bookPath);
+  if (!Storage.exists(path.c_str())) {
+    return false;
+  }
+  HalFile file;
+  if (!Storage.openFileForRead("HLU", path, file)) {
+    return false;
+  }
+
+  uint8_t header[9];
+  while (file.read(header, sizeof(header)) == static_cast<int>(sizeof(header))) {
+    uint16_t spine;
+    uint16_t page;
+    uint16_t wordStart;
+    uint16_t wordEnd;
+    memcpy(&spine, &header[0], sizeof(spine));
+    memcpy(&page, &header[2], sizeof(page));
+    memcpy(&wordStart, &header[4], sizeof(wordStart));
+    memcpy(&wordEnd, &header[6], sizeof(wordEnd));
+    if (spine == spineIndex && page == pageIndex) {
+      if (outRanges.empty()) {
+        outRanges.reserve(4);
+      }
+      outRanges.emplace_back(wordStart, wordEnd);
+      if (outRanges.size() >= MAX_PAGE_HIGHLIGHTS) {
+        break;
+      }
+    }
+    if (!file.seekCur(header[8])) {
+      break;
+    }
+  }
+  return !outRanges.empty();
+}
+
 #endif  // CROSSPOINT_HIGHLIGHT_EXPERIMENT

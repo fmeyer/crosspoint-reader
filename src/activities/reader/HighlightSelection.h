@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 class GfxRenderer;
@@ -33,6 +34,9 @@ class HighlightSelection {
   void paintCurrent(const GfxRenderer& renderer);
   // Incremental path: un-invert the previously painted range, invert the current one.
   void repaintDiff(const GfxRenderer& renderer);
+  // Invert saved word ranges into a freshly rendered page (persistent highlights).
+  // Clamps stale indices and merges overlaps so XOR painting never double-inverts.
+  void paintRanges(const GfxRenderer& renderer, std::vector<std::pair<uint16_t, uint16_t>> ranges) const;
 
   std::string selectedText() const;
   uint16_t selectionStart() const { return selStart; }

@@ -957,8 +957,22 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   scope.endScanAndPrewarm();
   const auto tPrewarm = millis();
 
+#if CROSSPOINT_HIGHLIGHT_EXPERIMENT
+  // Saved highlights render as persistent inversions whenever the page is drawn
+  // outside selection mode. Any visible inversion forces a BW-only render: the
+  // grayscale AA passes would otherwise overwrite the inverted regions.
+  std::vector<std::pair<uint16_t, uint16_t>> savedHighlightRanges;
+  if (!highlight && epub && section) {
+    HighlightUtil::loadHighlightsForPage(epub->getPath(), static_cast<uint16_t>(currentSpineIndex),
+                                         static_cast<uint16_t>(section->currentPage), savedHighlightRanges);
+  }
+  const bool suppressAA = highlightModeActive() || !savedHighlightRanges.empty();
+#else
+  constexpr bool suppressAA = false;
+#endif
+
   // Force special handling for pages with images when anti-aliasing is on
-  bool imagePageWithAA = page->hasImages() && SETTINGS.textAntiAliasing && !highlightModeActive();
+  bool imagePageWithAA = page->hasImages() && SETTINGS.textAntiAliasing && !suppressAA;
 
   page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
   renderStatusBar();
@@ -973,6 +987,12 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
     }
     if (highlight->isBuilt()) {
       highlight->paintCurrent(renderer);
+    }
+  } else if (!savedHighlightRanges.empty()) {
+    HighlightSelection saved;
+    if (saved.buildFromPage(*page, renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop,
+                            SETTINGS.getReaderLineCompression())) {
+      saved.paintRanges(renderer, std::move(savedHighlightRanges));
     }
   }
 #endif
@@ -1009,7 +1029,7 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   // per plane, but renderCharImpl culls out-of-band glyphs before decode so the
   // cost stays close to one render. Both text (drawPixel) and images
   // (DirectPixelWriter) honor the active strip target.
-  if (SETTINGS.textAntiAliasing && !highlightModeActive() && renderer.supportsStripGrayscale()) {
+  if (SETTINGS.textAntiAliasing && !suppressAA && renderer.supportsStripGrayscale()) {
     constexpr int STRIP_ROWS = 80;
     const int gh = renderer.getDisplayHeight();
     const int gwBytes = renderer.getDisplayWidthBytes();
@@ -1062,7 +1082,7 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   } else {
     // Fallback path for a controller without strip support. grayscale rendering
     // TODO: Only do this if font supports it
-    if (SETTINGS.textAntiAliasing && !highlightModeActive()) {
+    if (SETTINGS.textAntiAliasing && !suppressAA) {
       // Save the BW frame before the grayscale passes overwrite it, restore
       // after. Only needed when grayscale actually renders.
       renderer.storeBwBuffer();

@@ -309,6 +309,37 @@ void HighlightSelection::paintCurrent(const GfxRenderer& renderer) {
   hasPainted = true;
 }
 
+void HighlightSelection::paintRanges(const GfxRenderer& renderer,
+                                     std::vector<std::pair<uint16_t, uint16_t>> ranges) const {
+  if (rects.empty() || ranges.empty()) {
+    return;
+  }
+  const auto last = static_cast<uint16_t>(rects.size() - 1);
+  std::sort(ranges.begin(), ranges.end());
+  uint16_t runStart = 0;
+  uint16_t runEnd = 0;
+  bool haveRun = false;
+  for (const auto& [start, rawEnd] : ranges) {
+    if (start > last) {
+      continue;  // stale indices from a layout that no longer matches
+    }
+    const uint16_t end = std::min(rawEnd, last);
+    if (haveRun && start <= runEnd + 1) {
+      runEnd = std::max(runEnd, end);
+      continue;
+    }
+    if (haveRun) {
+      paintRange(renderer, runStart, runEnd);
+    }
+    runStart = start;
+    runEnd = end;
+    haveRun = true;
+  }
+  if (haveRun) {
+    paintRange(renderer, runStart, runEnd);
+  }
+}
+
 void HighlightSelection::repaintDiff(const GfxRenderer& renderer) {
   if (rects.empty()) {
     return;
