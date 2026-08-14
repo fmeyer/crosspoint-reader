@@ -327,38 +327,7 @@ void EpubReaderActivity::loop() {
     return;
   }
 
-#if CROSSPOINT_HIGHLIGHT_EXPERIMENT
-  // Chord detection has to run in front of the page-turn logic: with press-edge
-  // page turns the first button of a chord would otherwise turn the page before
-  // the second button can arrive, so singles are deferred by the chord window and
-  // re-emitted here as page turns.
-  ReaderUtils::PageTurnResult turn{false, false, false};
-  {
-    const bool deferSingles = SETTINGS.longPressButtonBehavior == SETTINGS.OFF;
-    switch (chordDetector.update(mappedInput, deferSingles)) {
-      case SideButtonChordDetector::Event::Chord:
-        if (section && section->pageCount > 0 && !automaticPageTurnActive) {
-          enterHighlightMode();
-        }
-        return;
-      case SideButtonChordDetector::Event::SingleBack:
-        turn.prev = true;
-        break;
-      case SideButtonChordDetector::Event::SingleForward:
-        turn.next = true;
-        break;
-      case SideButtonChordDetector::Event::None:
-        if (!chordDetector.isIdle()) {
-          return;  // chord forming, or button releases being swallowed
-        }
-        turn = ReaderUtils::detectPageTurn(mappedInput);
-        break;
-    }
-  }
-  const auto [prevTriggered, nextTriggered, fromTilt] = turn;
-#else
   const auto [prevTriggered, nextTriggered, fromTilt] = ReaderUtils::detectPageTurn(mappedInput);
-#endif
   if (!prevTriggered && !nextTriggered) {
     return;
   }
@@ -494,6 +463,15 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
   };
 
   switch (action) {
+    // Menu item only exists when the experiment flag is on; the case stays
+    // unconditional so flag-off builds don't trip -Wswitch.
+    case EpubReaderMenuActivity::MenuAction::HIGHLIGHT:
+#if CROSSPOINT_HIGHLIGHT_EXPERIMENT
+      if (section && section->pageCount > 0 && !automaticPageTurnActive) {
+        enterHighlightMode();
+      }
+#endif
+      break;
     case EpubReaderMenuActivity::MenuAction::SELECT_CHAPTER: {
       const int spineIdx = currentSpineIndex;
       const std::string path = epub->getPath();
@@ -1271,18 +1249,23 @@ void EpubReaderActivity::handleHighlightModeInput() {
   }
 
   bool changed = false;
-  switch (chordDetector.update(mappedInput, true)) {
-    case SideButtonChordDetector::Event::Chord:
-      changed = highlight->sentenceHop();
-      break;
-    case SideButtonChordDetector::Event::SingleForward:
-      changed = highlight->onSinglePress(true);
-      break;
-    case SideButtonChordDetector::Event::SingleBack:
-      changed = highlight->onSinglePress(false);
-      break;
-    case SideButtonChordDetector::Event::None:
-      break;
+  if (mappedInput.wasPressed(MappedInputManager::Button::PageForward)) {
+    changed = highlight->onSinglePress(true);
+  } else if (mappedInput.wasPressed(MappedInputManager::Button::PageBack)) {
+    changed = highlight->onSinglePress(false);
+  } else {
+    // Front Left/Right hop to the previous/next sentence start, honoring the same
+    // orientation-based swap as ReaderUtils::detectPageTurn.
+    const bool swapFront =
+        SETTINGS.frontButtonFollowOrientation && (SETTINGS.orientation == CrossPointSettings::INVERTED ||
+                                                  SETTINGS.orientation == CrossPointSettings::LANDSCAPE_CCW);
+    const auto prevButton = swapFront ? MappedInputManager::Button::Right : MappedInputManager::Button::Left;
+    const auto nextButton = swapFront ? MappedInputManager::Button::Left : MappedInputManager::Button::Right;
+    if (mappedInput.wasPressed(nextButton)) {
+      changed = highlight->sentenceHop(true);
+    } else if (mappedInput.wasPressed(prevButton)) {
+      changed = highlight->sentenceHop(false);
+    }
   }
   if (changed && highlight->isBuilt()) {
     highlightIncrementalPending = true;

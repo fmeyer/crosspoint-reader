@@ -71,10 +71,8 @@ class EpubReaderActivity final : public Activity {
   void restoreSavedPosition();
 
 #if CROSSPOINT_HIGHLIGHT_EXPERIMENT
-  // Side-button text highlight mode (experiment). The detector runs every loop to
-  // catch the PageBack+PageForward chord; the selection model exists only while
-  // the mode is active.
-  SideButtonChordDetector chordDetector;
+  // Text highlight mode (experiment), entered from the reader menu. The selection
+  // model exists only while the mode is active.
   std::unique_ptr<HighlightSelection> highlight;
   bool highlightIncrementalPending = false;
   bool showHighlightMessage = false;

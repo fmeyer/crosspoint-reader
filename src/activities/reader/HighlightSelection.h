@@ -7,33 +7,7 @@
 #include <vector>
 
 class GfxRenderer;
-class MappedInputManager;
 class Page;
-
-// Detects the PageBack+PageForward side-button chord alongside single side-button
-// presses. When page turns fire on the press edge (longPressButtonBehavior == OFF)
-// a single press cannot be distinguished from the first button of a chord, so the
-// press is deferred by CHORD_WINDOW_MS and emitted late if the second button never
-// arrives. In release-edge mode singles flow through ReaderUtils::detectPageTurn
-// untouched and only the chord (both buttons held) is detected here; the SWALLOW
-// state then eats both release edges so they cannot trigger page turns.
-class SideButtonChordDetector {
- public:
-  enum class Event : uint8_t { None, Chord, SingleBack, SingleForward };
-
-  // deferSingles: true in highlight mode (chord is always meaningful there) and in
-  // press-edge page-turn mode; false when page turns fire on release edges.
-  Event update(const MappedInputManager& input, bool deferSingles);
-  bool isIdle() const { return state == State::Idle; }
-
-  static constexpr unsigned long CHORD_WINDOW_MS = 250;
-
- private:
-  enum class State : uint8_t { Idle, Defer, Swallow };
-  State state = State::Idle;
-  bool deferIsForward = false;
-  unsigned long deferStart = 0;
-};
 
 // Word-level selection model for the page currently on screen. Built once per page
 // from the deserialized Page (word geometry + sentence/paragraph boundary flags),
@@ -47,8 +21,9 @@ class HighlightSelection {
   bool isBuilt() const { return !rects.empty(); }
   bool wasBuildAttempted() const { return buildTried; }
 
-  // Chord while in mode: collapse to the first word of the next sentence (wraps).
-  bool sentenceHop();
+  // Collapse the selection to the first word of the next (forward) or previous
+  // sentence; wraps around the page in both directions.
+  bool sentenceHop(bool forward);
   // Single side-button press; consecutive presses of the same button within
   // MULTI_PRESS_MS escalate word -> sentence -> paragraph. Returns true when the
   // selection changed.

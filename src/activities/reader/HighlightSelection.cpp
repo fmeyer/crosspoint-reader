@@ -11,8 +11,6 @@
 
 #include <algorithm>
 
-#include "MappedInputManager.h"
-
 namespace {
 
 // Decode the UTF-8 codepoint that ends at byte index `end` (exclusive).
@@ -71,49 +69,6 @@ bool startsWithEmSpace(const std::string& word) {
 }
 
 }  // namespace
-
-SideButtonChordDetector::Event SideButtonChordDetector::update(const MappedInputManager& input,
-                                                               const bool deferSingles) {
-  const bool backHeld = input.isPressed(MappedInputManager::Button::PageBack);
-  const bool fwdHeld = input.isPressed(MappedInputManager::Button::PageForward);
-
-  switch (state) {
-    case State::Idle: {
-      if (backHeld && fwdHeld) {
-        state = State::Swallow;
-        return Event::Chord;
-      }
-      const bool backEdge = input.wasPressed(MappedInputManager::Button::PageBack);
-      const bool fwdEdge = input.wasPressed(MappedInputManager::Button::PageForward);
-      if (deferSingles && (backEdge || fwdEdge)) {
-        state = State::Defer;
-        deferIsForward = fwdEdge;
-        deferStart = millis();
-      }
-      return Event::None;
-    }
-    case State::Defer: {
-      const bool otherHeld = deferIsForward ? backHeld : fwdHeld;
-      if (otherHeld) {
-        state = State::Swallow;
-        return Event::Chord;
-      }
-      const bool selfReleased = deferIsForward ? input.wasReleased(MappedInputManager::Button::PageForward)
-                                               : input.wasReleased(MappedInputManager::Button::PageBack);
-      if (selfReleased || millis() - deferStart >= CHORD_WINDOW_MS) {
-        state = State::Idle;
-        return deferIsForward ? Event::SingleForward : Event::SingleBack;
-      }
-      return Event::None;
-    }
-    case State::Swallow:
-      if (!backHeld && !fwdHeld) {
-        state = State::Idle;
-      }
-      return Event::None;
-  }
-  return Event::None;
-}
 
 bool HighlightSelection::buildFromPage(const Page& page, const GfxRenderer& renderer, const int fontId,
                                        const int marginLeft, const int marginTop, const float lineCompression) {
@@ -214,16 +169,30 @@ bool HighlightSelection::buildFromPage(const Page& page, const GfxRenderer& rend
   return !rects.empty();
 }
 
-bool HighlightSelection::sentenceHop() {
+bool HighlightSelection::sentenceHop(const bool forward) {
   if (rects.empty()) {
     return false;
   }
   const auto n = static_cast<uint16_t>(rects.size());
-  uint16_t idx = 0;  // wrap target: word 0 always carries SENTENCE_START
-  for (uint16_t i = selEnd + 1; i < n; i++) {
-    if ((rects[i].flags & FLAG_SENTENCE_START) != 0) {
-      idx = i;
-      break;
+  uint16_t idx;
+  if (forward) {
+    idx = 0;  // wrap target: word 0 always carries SENTENCE_START
+    for (uint16_t i = selEnd + 1; i < n; i++) {
+      if ((rects[i].flags & FLAG_SENTENCE_START) != 0) {
+        idx = i;
+        break;
+      }
+    }
+  } else {
+    // Start of the current sentence; if the selection already sits on it, the
+    // previous one. Wraps to the last sentence start on the page.
+    const uint16_t current = scanBackFlag(selStart, FLAG_SENTENCE_START);
+    if (current < selStart) {
+      idx = current;
+    } else if (selStart > 0) {
+      idx = scanBackFlag(selStart - 1, FLAG_SENTENCE_START);
+    } else {
+      idx = scanBackFlag(n - 1, FLAG_SENTENCE_START);
     }
   }
   anchor = selStart = selEnd = idx;
