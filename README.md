@@ -1,7 +1,7 @@
 # CrossPoint test firmware — text highlight experiment
 
-**Version:** `1.3.0-dev-claude/branch-from-1-3-0-kicq4d-1a38371`
-**Source:** branch [`claude/branch-from-1-3-0-kicq4d`](https://github.com/fmeyer/crosspoint-reader/tree/claude/branch-from-1-3-0-kicq4d) @ `1a38371`
+**Version:** `1.3.0-dev-claude/branch-from-1-3-0-kicq4d-a5d3df0`
+**Source:** branch [`claude/branch-from-1-3-0-kicq4d`](https://github.com/fmeyer/crosspoint-reader/tree/claude/branch-from-1-3-0-kicq4d) @ `a5d3df0`
 **Build:** `pio run -e default` (debug build: serial logging on, `LOG_LEVEL=2`, `CROSSPOINT_HIGHLIGHT_EXPERIMENT=1`)
 
 Includes the 1.3.0 baseline, Portuguese hyphenation, and the experimental
@@ -47,3 +47,6 @@ Notes for this experiment build:
 - Anti-aliased (grayscale) text rendering is temporarily disabled while highlight mode is
   active; it comes back on exit (exit forces a HALF refresh to clear ghosting).
 - Normal reading controls are completely unaffected — page turns have no added latency.
+
+> Rev 3: saved highlights now stay visible — the highlight remains inverted after
+> Confirm, and re-appears whenever you come back to that page.
