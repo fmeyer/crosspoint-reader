@@ -1,7 +1,7 @@
 # CrossPoint test firmware — text highlight experiment
 
-**Version:** `1.3.0-dev-claude/branch-from-1-3-0-kicq4d-a5d3df0`
-**Source:** branch [`claude/branch-from-1-3-0-kicq4d`](https://github.com/fmeyer/crosspoint-reader/tree/claude/branch-from-1-3-0-kicq4d) @ `a5d3df0`
+**Version:** `1.3.0-dev-claude/branch-from-1-3-0-kicq4d-706ce4b`
+**Source:** branch [`claude/branch-from-1-3-0-kicq4d`](https://github.com/fmeyer/crosspoint-reader/tree/claude/branch-from-1-3-0-kicq4d) @ `706ce4b`
 **Build:** `pio run -e default` (debug build: serial logging on, `LOG_LEVEL=2`, `CROSSPOINT_HIGHLIGHT_EXPERIMENT=1`)
 
 Includes the 1.3.0 baseline, Portuguese hyphenation, and the experimental
@@ -38,6 +38,7 @@ In the EPUB reader, on a text page:
 | **PageBack** ×1 / rapid ×2 / ×3 | Shrink by a word / trim to anchor's sentence / collapse to anchor word |
 | Front **Right** / **Left** | Hop to next / previous sentence start (wraps around the page) |
 | **Confirm** | Save highlight ("Highlight saved." popup) and exit |
+| Reader menu → **Highlights** | List saved highlights: Confirm jumps to the page, hold Confirm deletes |
 | **Back** | Exit without saving |
 
 Saved highlights land on the SD card in `/.crosspoint/highlights/<book>.hl`
@@ -50,3 +51,6 @@ Notes for this experiment build:
 
 > Rev 3: saved highlights now stay visible — the highlight remains inverted after
 > Confirm, and re-appears whenever you come back to that page.
+
+> Rev 4: new "Highlights" menu item lists a book's saved highlights — Confirm
+> jumps to the highlight's page, holding Confirm deletes it.
