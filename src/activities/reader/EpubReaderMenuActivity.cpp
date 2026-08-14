@@ -3,6 +3,7 @@
 #include <GfxRenderer.h>
 #include <I18n.h>
 
+#include "CrossPointSettings.h"
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -28,7 +29,12 @@ std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildMenuI
   }
   items.push_back({MenuAction::BOOKMARKS, StrId::STR_BOOKMARKS});
 #if CROSSPOINT_HIGHLIGHT_EXPERIMENT
-  items.push_back({MenuAction::HIGHLIGHT, StrId::STR_HIGHLIGHT});
+  // When holding Confirm starts a highlight, bookmark creation swaps into the menu.
+  if (SETTINGS.holdConfirmAction == CrossPointSettings::HOLD_CONFIRM_HIGHLIGHT) {
+    items.push_back({MenuAction::ADD_BOOKMARK, StrId::STR_ADD_BOOKMARK});
+  } else {
+    items.push_back({MenuAction::HIGHLIGHT, StrId::STR_HIGHLIGHT});
+  }
   items.push_back({MenuAction::HIGHLIGHTS, StrId::STR_HIGHLIGHTS});
 #endif
   items.push_back({MenuAction::ROTATE_SCREEN, StrId::STR_ORIENTATION});

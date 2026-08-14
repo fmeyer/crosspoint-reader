@@ -302,6 +302,15 @@ void EpubReaderActivity::loop() {
 
   if (mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
       mappedInput.getHeldTime() >= ReaderUtils::BOOKMARK_HOLD_MS) {
+#if CROSSPOINT_HIGHLIGHT_EXPERIMENT
+    if (SETTINGS.holdConfirmAction == CrossPointSettings::HOLD_CONFIRM_HIGHLIGHT) {
+      if (section && section->pageCount > 0 && !automaticPageTurnActive) {
+        ignoreNextConfirmRelease = true;  // The entry hold's release must not save-and-exit the mode
+        enterHighlightMode();
+      }
+      return;
+    }
+#endif
     if (!showBookmarkMessage) {
       addBookmark();
       showBookmarkMessage = true;
@@ -478,6 +487,14 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       startActivityForResult(
           std::make_unique<EpubReaderHighlightsActivity>(renderer, mappedInput, epub, epub->getPath()),
           progressChangeResultHandler);
+#endif
+      break;
+    case EpubReaderMenuActivity::MenuAction::ADD_BOOKMARK:
+#if CROSSPOINT_HIGHLIGHT_EXPERIMENT
+      addBookmark();
+      showBookmarkMessage = true;
+      bookmarkMessageTime = millis();
+      requestUpdate();
 #endif
       break;
     case EpubReaderMenuActivity::MenuAction::SELECT_CHAPTER: {
@@ -1258,6 +1275,11 @@ void EpubReaderActivity::handleHighlightModeInput() {
   }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    if (ignoreNextConfirmRelease) {
+      // Release of the hold that entered the mode (hold-Confirm entry setting).
+      ignoreNextConfirmRelease = false;
+      return;
+    }
     if (highlight->isBuilt() && section) {
       if (HighlightUtil::saveHighlight(epub->getPath(), static_cast<uint16_t>(currentSpineIndex),
                                        static_cast<uint16_t>(section->currentPage), highlight->selectionStart(),

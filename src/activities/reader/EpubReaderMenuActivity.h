@@ -20,6 +20,7 @@ class EpubReaderMenuActivity final : public Activity {
     BOOKMARKS,
     HIGHLIGHT,
     HIGHLIGHTS,
+    ADD_BOOKMARK,
     SCREENSHOT,
     DISPLAY_QR,
     GO_HOME,

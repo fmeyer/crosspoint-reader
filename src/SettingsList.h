@@ -173,6 +173,10 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                           {StrId::STR_LONG_PRESS_BEHAVIOR_OFF, StrId::STR_LONG_PRESS_BEHAVIOR_SKIP,
                            StrId::STR_LONG_PRESS_BEHAVIOR_ORIENTATION},
                           "longPressButtonBehavior", StrId::STR_CAT_CONTROLS),
+#if CROSSPOINT_HIGHLIGHT_EXPERIMENT
+        SettingInfo::Enum(StrId::STR_HOLD_CONFIRM_ACTION, &CrossPointSettings::holdConfirmAction,
+                          {StrId::STR_BOOKMARK, StrId::STR_HIGHLIGHT}, "holdConfirmAction", StrId::STR_CAT_CONTROLS),
+#endif
         SettingInfo::Enum(StrId::STR_SHORT_PWR_BTN, &CrossPointSettings::shortPwrBtn,
                           {StrId::STR_IGNORE, StrId::STR_SLEEP, StrId::STR_PAGE_TURN, StrId::STR_FORCE_REFRESH},
                           "shortPwrBtn", StrId::STR_CAT_CONTROLS),

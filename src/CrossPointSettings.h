@@ -147,6 +147,9 @@ class CrossPointSettings {
     LONG_PRESS_BUTTON_BEHAVIOR_COUNT
   };
 
+  // Hold-Confirm action while reading
+  enum HOLD_CONFIRM_ACTION { HOLD_CONFIRM_BOOKMARK = 0, HOLD_CONFIRM_HIGHLIGHT = 1, HOLD_CONFIRM_ACTION_COUNT };
+
   // UI Theme
   enum UI_THEME { CLASSIC = 0, LYRA = 1, LYRA_3_COVERS = 2, ROUNDEDRAFF = 3 };
 
@@ -226,6 +229,9 @@ class CrossPointSettings {
   uint8_t hideBatteryPercentage = HIDE_NEVER;
   // Long-press page turn button behavior
   uint8_t longPressButtonBehavior = OFF;
+  // Holding Confirm while reading adds a bookmark (default) or starts a highlight
+  // (highlight experiment only; ignored when the experiment is compiled out)
+  uint8_t holdConfirmAction = HOLD_CONFIRM_BOOKMARK;
   // UI Theme
   uint8_t uiTheme = LYRA;
   // Sunlight fading compensation
