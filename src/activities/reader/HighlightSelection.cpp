@@ -81,6 +81,7 @@ bool HighlightSelection::buildFromPage(const Page& page, const GfxRenderer& rend
   if (lineH <= 0) {
     lineH = renderer.getLineHeight(fontId);
   }
+  ascender = renderer.getFontAscenderSize(fontId);
 
   // Pre-count for exact reserves: growth reallocations fragment the small DRAM heap.
   size_t wordTotal = 0;
@@ -309,8 +310,8 @@ void HighlightSelection::paintCurrent(const GfxRenderer& renderer) {
   hasPainted = true;
 }
 
-void HighlightSelection::paintRanges(const GfxRenderer& renderer,
-                                     std::vector<std::pair<uint16_t, uint16_t>> ranges) const {
+void HighlightSelection::underlineRanges(const GfxRenderer& renderer,
+                                         std::vector<std::pair<uint16_t, uint16_t>> ranges) const {
   if (rects.empty() || ranges.empty()) {
     return;
   }
@@ -319,6 +320,26 @@ void HighlightSelection::paintRanges(const GfxRenderer& renderer,
   uint16_t runStart = 0;
   uint16_t runEnd = 0;
   bool haveRun = false;
+  const auto drawRun = [&](const uint16_t a, const uint16_t b) {
+    // One underline per screen line: min/max over the run keeps inter-word gaps
+    // covered and stays correct for RTL lines where x is not monotonic.
+    size_t i = a;
+    while (i <= b) {
+      const int16_t y = rects[i].y;
+      int minX = rects[i].x;
+      int maxX = rects[i].x + rects[i].w;
+      size_t j = i + 1;
+      while (j <= b && rects[j].y == y) {
+        minX = std::min(minX, static_cast<int>(rects[j].x));
+        maxX = std::max(maxX, rects[j].x + rects[j].w);
+        j++;
+      }
+      // Baseline + 2, matching TextBlock's UNDERLINE placement.
+      const int underlineY = y + ascender + 2;
+      renderer.drawLine(minX, underlineY, maxX, underlineY, 2, true);
+      i = j;
+    }
+  };
   for (const auto& [start, rawEnd] : ranges) {
     if (start > last) {
       continue;  // stale indices from a layout that no longer matches
@@ -329,14 +350,14 @@ void HighlightSelection::paintRanges(const GfxRenderer& renderer,
       continue;
     }
     if (haveRun) {
-      paintRange(renderer, runStart, runEnd);
+      drawRun(runStart, runEnd);
     }
     runStart = start;
     runEnd = end;
     haveRun = true;
   }
   if (haveRun) {
-    paintRange(renderer, runStart, runEnd);
+    drawRun(runStart, runEnd);
   }
 }
 

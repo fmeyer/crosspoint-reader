@@ -983,17 +983,29 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   const auto tPrewarm = millis();
 
 #if CROSSPOINT_HIGHLIGHT_EXPERIMENT
-  // Saved highlights render as persistent inversions whenever the page is drawn
-  // outside selection mode. Any visible inversion forces a BW-only render: the
-  // grayscale AA passes would otherwise overwrite the inverted regions.
+  // Saved highlights render as baseline underlines whenever the page is drawn.
+  // Underlines are plain black draws, so they must be repainted inside every
+  // grayscale AA pass (like the EPUB UNDERLINE style, which is re-drawn by
+  // page->render each pass) — in exchange, AA can stay enabled on pages with
+  // saved highlights. Only live selection mode forces BW-only rendering, since
+  // its XOR inversion cannot survive the grayscale planes.
   std::vector<std::pair<uint16_t, uint16_t>> savedHighlightRanges;
-  if (!highlight && epub && section) {
-    HighlightUtil::loadHighlightsForPage(epub->getPath(), static_cast<uint16_t>(currentSpineIndex),
-                                         static_cast<uint16_t>(section->currentPage), savedHighlightRanges);
+  HighlightSelection savedSelection;
+  if (epub && section &&
+      HighlightUtil::loadHighlightsForPage(epub->getPath(), static_cast<uint16_t>(currentSpineIndex),
+                                           static_cast<uint16_t>(section->currentPage), savedHighlightRanges)) {
+    savedSelection.buildFromPage(*page, renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop,
+                                 SETTINGS.getReaderLineCompression());
   }
-  const bool suppressAA = highlightModeActive() || !savedHighlightRanges.empty();
+  const auto paintSavedHighlights = [&] {
+    if (savedSelection.isBuilt()) {
+      savedSelection.underlineRanges(renderer, savedHighlightRanges);
+    }
+  };
+  const bool suppressAA = highlightModeActive();
 #else
   constexpr bool suppressAA = false;
+  const auto paintSavedHighlights = [] {};
 #endif
 
   // Force special handling for pages with images when anti-aliasing is on
@@ -1003,6 +1015,7 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   renderStatusBar();
 
 #if CROSSPOINT_HIGHLIGHT_EXPERIMENT
+  paintSavedHighlights();
   // Build the selection model from the live Page (it is freed at the end of this
   // function) and invert the current selection into the fresh BW render.
   if (highlight) {
@@ -1012,12 +1025,6 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
     }
     if (highlight->isBuilt()) {
       highlight->paintCurrent(renderer);
-    }
-  } else if (!savedHighlightRanges.empty()) {
-    HighlightSelection saved;
-    if (saved.buildFromPage(*page, renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop,
-                            SETTINGS.getReaderLineCompression())) {
-      saved.paintRanges(renderer, std::move(savedHighlightRanges));
     }
   }
 #endif
@@ -1037,6 +1044,7 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
       // Re-render page content to restore images into the blanked area
       // Status bar is not re-rendered here to avoid reading stale dynamic values (e.g. battery %)
       page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
+      paintSavedHighlights();
       renderer.displayBuffer(HalDisplay::FAST_REFRESH);
     } else {
       renderer.displayBuffer(HalDisplay::HALF_REFRESH);
@@ -1071,6 +1079,7 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
         renderer.beginStripTarget(scratch.get(), y, rows);
         renderer.clearScreen(0x00);
         page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
+        paintSavedHighlights();
         renderer.endStripTarget();
         renderer.writeGrayscalePlaneStrip(true, scratch.get(), y, rows);
       }
@@ -1083,6 +1092,7 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
         renderer.beginStripTarget(scratch.get(), y, rows);
         renderer.clearScreen(0x00);
         page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
+        paintSavedHighlights();
         renderer.endStripTarget();
         renderer.writeGrayscalePlaneStrip(false, scratch.get(), y, rows);
       }
@@ -1116,6 +1126,7 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
       renderer.clearScreen(0x00);
       renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
       page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
+      paintSavedHighlights();
       renderer.copyGrayscaleLsbBuffers();
       const auto tGrayLsb = millis();
 
@@ -1123,6 +1134,7 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
       renderer.clearScreen(0x00);
       renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
       page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
+      paintSavedHighlights();
       renderer.copyGrayscaleMsbBuffers();
       const auto tGrayMsb = millis();
 

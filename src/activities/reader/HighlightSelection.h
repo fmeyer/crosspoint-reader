@@ -34,9 +34,12 @@ class HighlightSelection {
   void paintCurrent(const GfxRenderer& renderer);
   // Incremental path: un-invert the previously painted range, invert the current one.
   void repaintDiff(const GfxRenderer& renderer);
-  // Invert saved word ranges into a freshly rendered page (persistent highlights).
-  // Clamps stale indices and merges overlaps so XOR painting never double-inverts.
-  void paintRanges(const GfxRenderer& renderer, std::vector<std::pair<uint16_t, uint16_t>> ranges) const;
+  // Draw saved word ranges as 2px underlines at the text baseline (persistent
+  // highlights). Plain black draws, so they are safe to repaint in every render
+  // pass — including the grayscale anti-aliasing planes, where they must be
+  // re-drawn to survive (same mechanism as the EPUB UNDERLINE style). Clamps
+  // stale indices and merges overlapping ranges.
+  void underlineRanges(const GfxRenderer& renderer, std::vector<std::pair<uint16_t, uint16_t>> ranges) const;
 
   std::string selectedText() const;
   uint16_t selectionStart() const { return selStart; }
@@ -61,6 +64,7 @@ class HighlightSelection {
   std::string textPool;              // space-joined page text (snippet extraction)
   std::vector<uint16_t> textOffset;  // rects.size() + 1 entries (sentinel at end)
   int lineH = 0;
+  int ascender = 0;  // baseline offset from line top, for underline placement
 
   uint16_t anchor = 0;
   uint16_t selStart = 0;
