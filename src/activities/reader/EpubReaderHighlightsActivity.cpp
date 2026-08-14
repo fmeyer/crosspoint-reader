@@ -22,9 +22,36 @@ constexpr int LINE_HEIGHT = 60;
 
 void EpubReaderHighlightsActivity::onEnter() {
   Activity::onEnter();
+  chapters.clear();
+  HighlightUtil::loadChapterCounts(epubPath, chapters);
+  LOG_DBG("EPH", "Loaded highlight counts for %d chapters: %s", static_cast<int>(chapters.size()), epubPath.c_str());
+  requestUpdate();
+}
+
+std::string EpubReaderHighlightsActivity::chapterTitle(const uint16_t spineIndex) const {
+  const auto tocIndex = epub->getTocIndexForSpineIndex(spineIndex);
+  return (tocIndex >= 0) ? (epub->getTocItem(tocIndex)).title : tr(STR_UNNAMED);
+}
+
+void EpubReaderHighlightsActivity::openChapter(const int index) {
   highlights.clear();
-  HighlightUtil::loadHighlights(epubPath, highlights);
-  LOG_DBG("EPH", "Loaded %d highlights for book: %s", static_cast<int>(highlights.size()), epubPath.c_str());
+  HighlightUtil::loadChapterHighlights(epubPath, chapters.at(index).spineIndex, highlights);
+  chapterIndex = index;
+  inChapter = true;
+  selectorIndex = 0;
+  requestUpdate();
+}
+
+void EpubReaderHighlightsActivity::backToChapters() {
+  highlights.clear();
+  highlights.shrink_to_fit();
+  chapters.clear();
+  HighlightUtil::loadChapterCounts(epubPath, chapters);
+  inChapter = false;
+  if (chapterIndex >= static_cast<int>(chapters.size())) {
+    chapterIndex = chapters.empty() ? 0 : static_cast<int>(chapters.size()) - 1;
+  }
+  selectorIndex = chapterIndex;
   requestUpdate();
 }
 
@@ -39,7 +66,7 @@ int EpubReaderHighlightsActivity::getListHeight(const GfxRenderer& renderer) {
 }
 
 void EpubReaderHighlightsActivity::loop() {
-  // Delete confirmation mode
+  // Delete confirmation mode (chapter view only)
   if (confirmingDelete >= DELETE_MODE_DISPLAY) {
     if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
       if (confirmingDelete == DELETE_MODE_DISPLAY) {
@@ -47,15 +74,21 @@ void EpubReaderHighlightsActivity::loop() {
         requestUpdate();
         return;
       }
-      highlights.erase(highlights.begin() + selectorIndex);
-      if (!HighlightUtil::saveAllHighlights(epubPath, highlights)) {
-        LOG_ERR("EPH", "Failed to save highlights after delete");
+      if (!HighlightUtil::deleteHighlight(epubPath, chapters.at(chapterIndex).spineIndex, selectorIndex)) {
+        LOG_ERR("EPH", "Failed to delete highlight");
+      }
+      confirmingDelete = DELETE_MODE_OFF;
+      // Reload the chapter; fall back to the chapter list when it emptied.
+      const uint16_t spine = chapters.at(chapterIndex).spineIndex;
+      highlights.clear();
+      if (!HighlightUtil::loadChapterHighlights(epubPath, spine, highlights)) {
+        backToChapters();
+        return;
       }
       if (selectorIndex >= static_cast<int>(highlights.size()) && selectorIndex > 0) {
         selectorIndex--;
       }
       requestUpdate();
-      confirmingDelete = DELETE_MODE_OFF;
       return;
     }
     if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
@@ -66,6 +99,12 @@ void EpubReaderHighlightsActivity::loop() {
   }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {  // Open
+    if (!inChapter) {
+      if (!chapters.empty()) {
+        openChapter(selectorIndex);
+      }
+      return;
+    }
     if (highlights.empty()) {
       return;
     }
@@ -75,6 +114,10 @@ void EpubReaderHighlightsActivity::loop() {
     return;
   }
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+    if (inChapter) {
+      backToChapters();
+      return;
+    }
     ActivityResult result;
     result.isCancelled = true;
     setResult(std::move(result));
@@ -82,7 +125,8 @@ void EpubReaderHighlightsActivity::loop() {
     return;
   }
 
-  if (mappedInput.isPressed(MappedInputManager::Button::Confirm) && mappedInput.getHeldTime() > ENTER_DELETE_MODE_MS) {
+  if (inChapter && mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
+      mappedInput.getHeldTime() > ENTER_DELETE_MODE_MS) {
     if (highlights.empty()) {
       return;
     }
@@ -90,24 +134,26 @@ void EpubReaderHighlightsActivity::loop() {
     requestUpdate();
   }
 
-  buttonNavigator.onNextRelease([this] {
-    selectorIndex = ButtonNavigator::nextIndex(selectorIndex, highlights.size());
+  const int itemCount = inChapter ? highlights.size() : chapters.size();
+
+  buttonNavigator.onNextRelease([this, itemCount] {
+    selectorIndex = ButtonNavigator::nextIndex(selectorIndex, itemCount);
     requestUpdate();
   });
 
-  buttonNavigator.onPreviousRelease([this] {
-    selectorIndex = ButtonNavigator::previousIndex(selectorIndex, highlights.size());
+  buttonNavigator.onPreviousRelease([this, itemCount] {
+    selectorIndex = ButtonNavigator::previousIndex(selectorIndex, itemCount);
     requestUpdate();
   });
 
-  buttonNavigator.onNextContinuous([this] {
-    selectorIndex = ButtonNavigator::nextPageIndex(selectorIndex, highlights.size(),
-                                                   GUI.getListPageItems(getListHeight(renderer), true));
+  buttonNavigator.onNextContinuous([this, itemCount] {
+    selectorIndex =
+        ButtonNavigator::nextPageIndex(selectorIndex, itemCount, GUI.getListPageItems(getListHeight(renderer), true));
     requestUpdate();
   });
 
-  buttonNavigator.onPreviousContinuous([this] {
-    selectorIndex = ButtonNavigator::previousPageIndex(selectorIndex, highlights.size(),
+  buttonNavigator.onPreviousContinuous([this, itemCount] {
+    selectorIndex = ButtonNavigator::previousPageIndex(selectorIndex, itemCount,
                                                        GUI.getListPageItems(getListHeight(renderer), true));
     requestUpdate();
   });
@@ -130,20 +176,39 @@ void EpubReaderHighlightsActivity::render(RenderLock&&) {
   const int contentY = hintGutterHeight;
   const int listY = contentY + LINE_HEIGHT;
   const int listHeight = getListHeight(renderer);
-  const int numHighlights = highlights.size();
 
   const int titleX =
       contentX + (contentWidth - renderer.getTextWidth(UI_12_FONT_ID, tr(STR_HIGHLIGHTS), EpdFontFamily::BOLD)) / 2;
   renderer.drawText(UI_12_FONT_ID, titleX, 15 + contentY, tr(STR_HIGHLIGHTS), true, EpdFontFamily::BOLD);
 
+  if (!inChapter) {
+    // Level one: chapters that have highlights.
+    const auto getTitle = [this](int index) { return chapterTitle(chapters.at(index).spineIndex); };
+    const auto getValue = [this](int index) { return std::to_string(chapters.at(index).count); };
+
+    if (!chapters.empty()) {
+      GUI.drawList(renderer, Rect{contentX, listY, contentWidth, listHeight}, chapters.size(), selectorIndex, getTitle,
+                   nullptr, nullptr, getValue);
+    } else {
+      GUI.drawHelpText(renderer, Rect{contentX, LINE_HEIGHT * 2, contentWidth, LINE_HEIGHT},
+                       tr(STR_HIGHLIGHT_INSTRUCTIONS));
+    }
+
+    const auto labels =
+        mappedInput.mapLabels(tr(STR_BACK), chapters.empty() ? "" : tr(STR_OPEN), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    renderer.displayBuffer();
+    return;
+  }
+
+  // Level two: one chapter's highlights.
+  const int numHighlights = highlights.size();
   const auto getTitle = [this](int index) {
     return highlights.at(confirmingDelete >= DELETE_MODE_DISPLAY ? selectorIndex : index).snippet;
   };
   const auto getSubtitle = [this](int index) {
     const auto& rec = highlights.at(confirmingDelete >= DELETE_MODE_DISPLAY ? selectorIndex : index);
-    const auto tocIndex = epub->getTocIndexForSpineIndex(rec.spineIndex);
-    const auto tocTitle = (tocIndex >= 0) ? (epub->getTocItem(tocIndex)).title : tr(STR_UNNAMED);
-    return tocTitle + " - " + std::to_string(rec.pageIndex + 1);
+    return chapterTitle(rec.spineIndex) + " - " + std::to_string(rec.pageIndex + 1);
   };
 
   if (numHighlights > 0) {
@@ -160,9 +225,6 @@ void EpubReaderHighlightsActivity::render(RenderLock&&) {
       GUI.drawHelpText(renderer, Rect{contentX, pageHeight - hintGutterBottom, contentWidth, LINE_HEIGHT},
                        tr(STR_HOLD_CONFIRM_TO_DELETE));
     }
-  } else {
-    GUI.drawHelpText(renderer, Rect{contentX, LINE_HEIGHT * 2, contentWidth, LINE_HEIGHT},
-                     tr(STR_HIGHLIGHT_INSTRUCTIONS));
   }
 
   const auto backLabel = confirmingDelete >= DELETE_MODE_DISPLAY ? tr(STR_CANCEL) : tr(STR_BACK);

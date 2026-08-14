@@ -930,7 +930,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
 
 #if CROSSPOINT_HIGHLIGHT_EXPERIMENT
   if (showHighlightMessage) {
-    GUI.drawPopup(renderer, tr(STR_HIGHLIGHT_SAVED));
+    GUI.drawPopup(renderer, I18N.get(highlightMessageId));
   }
 #endif
 }
@@ -1281,9 +1281,15 @@ void EpubReaderActivity::handleHighlightModeInput() {
       return;
     }
     if (highlight->isBuilt() && section) {
-      if (HighlightUtil::saveHighlight(epub->getPath(), static_cast<uint16_t>(currentSpineIndex),
-                                       static_cast<uint16_t>(section->currentPage), highlight->selectionStart(),
-                                       highlight->selectionEnd(), highlight->selectedText())) {
+      if (HighlightUtil::countChapterHighlights(epub->getPath(), static_cast<uint16_t>(currentSpineIndex)) >=
+          HighlightUtil::MAX_CHAPTER_HIGHLIGHTS) {
+        highlightMessageId = StrId::STR_HIGHLIGHT_LIMIT_REACHED;
+        showHighlightMessage = true;
+        highlightMessageTime = millis();
+      } else if (HighlightUtil::saveHighlight(epub->getPath(), static_cast<uint16_t>(currentSpineIndex),
+                                              static_cast<uint16_t>(section->currentPage), highlight->selectionStart(),
+                                              highlight->selectionEnd(), highlight->selectedText())) {
+        highlightMessageId = StrId::STR_HIGHLIGHT_SAVED;
         showHighlightMessage = true;
         highlightMessageTime = millis();
       }

@@ -24,8 +24,36 @@ std::string HighlightUtil::getHighlightPath(const std::string& bookPath) {
   return getHighlightsDir() + bookName;
 }
 
+size_t HighlightUtil::countChapterHighlights(const std::string& bookPath, const uint16_t spineIndex) {
+  const std::string path = getHighlightPath(bookPath);
+  if (!Storage.exists(path.c_str())) {
+    return 0;
+  }
+  HalFile file;
+  if (!Storage.openFileForRead("HLU", path, file)) {
+    return 0;
+  }
+  size_t count = 0;
+  uint8_t header[9];
+  while (file.read(header, sizeof(header)) == static_cast<int>(sizeof(header))) {
+    uint16_t spine;
+    memcpy(&spine, &header[0], sizeof(spine));
+    if (spine == spineIndex) {
+      count++;
+    }
+    if (!file.seekCur(header[8])) {
+      break;
+    }
+  }
+  return count;
+}
+
 bool HighlightUtil::saveHighlight(const std::string& bookPath, const uint16_t spineIndex, const uint16_t pageIndex,
                                   const uint16_t wordStart, const uint16_t wordEnd, const std::string& snippet) {
+  if (countChapterHighlights(bookPath, spineIndex) >= MAX_CHAPTER_HIGHLIGHTS) {
+    LOG_ERR("HLU", "Chapter highlight limit reached (%u)", static_cast<uint32_t>(MAX_CHAPTER_HIGHLIGHTS));
+    return false;
+  }
   if (!Storage.ensureDirectoryExists("/.crosspoint/highlights")) {
     LOG_ERR("HLU", "Failed to create highlights dir");
     return false;
@@ -98,7 +126,7 @@ bool HighlightUtil::loadHighlightsForPage(const std::string& bookPath, const uin
   return !outRanges.empty();
 }
 
-bool HighlightUtil::loadHighlights(const std::string& bookPath, std::vector<HighlightRecord>& outRecords) {
+bool HighlightUtil::loadChapterCounts(const std::string& bookPath, std::vector<ChapterHighlightCount>& outCounts) {
   const std::string path = getHighlightPath(bookPath);
   if (!Storage.exists(path.c_str())) {
     return false;
@@ -109,7 +137,41 @@ bool HighlightUtil::loadHighlights(const std::string& bookPath, std::vector<High
   }
 
   uint8_t header[9];
-  while (outRecords.size() < MAX_BOOK_HIGHLIGHTS &&
+  while (file.read(header, sizeof(header)) == static_cast<int>(sizeof(header))) {
+    uint16_t spine;
+    memcpy(&spine, &header[0], sizeof(spine));
+    auto it = std::find_if(outCounts.begin(), outCounts.end(),
+                           [spine](const ChapterHighlightCount& c) { return c.spineIndex == spine; });
+    if (it != outCounts.end()) {
+      it->count++;
+    } else {
+      if (outCounts.empty()) {
+        outCounts.reserve(8);
+      }
+      outCounts.push_back({spine, 1});
+    }
+    if (!file.seekCur(header[8])) {
+      break;
+    }
+  }
+  std::sort(outCounts.begin(), outCounts.end(),
+            [](const ChapterHighlightCount& a, const ChapterHighlightCount& b) { return a.spineIndex < b.spineIndex; });
+  return !outCounts.empty();
+}
+
+bool HighlightUtil::loadChapterHighlights(const std::string& bookPath, const uint16_t spineIndex,
+                                          std::vector<HighlightRecord>& outRecords) {
+  const std::string path = getHighlightPath(bookPath);
+  if (!Storage.exists(path.c_str())) {
+    return false;
+  }
+  HalFile file;
+  if (!Storage.openFileForRead("HLU", path, file)) {
+    return false;
+  }
+
+  uint8_t header[9];
+  while (outRecords.size() < MAX_CHAPTER_HIGHLIGHTS &&
          file.read(header, sizeof(header)) == static_cast<int>(sizeof(header))) {
     HighlightRecord rec;
     memcpy(&rec.spineIndex, &header[0], sizeof(rec.spineIndex));
@@ -117,6 +179,12 @@ bool HighlightUtil::loadHighlights(const std::string& bookPath, std::vector<High
     memcpy(&rec.wordStart, &header[4], sizeof(rec.wordStart));
     memcpy(&rec.wordEnd, &header[6], sizeof(rec.wordEnd));
     const uint8_t snippetLen = header[8];
+    if (rec.spineIndex != spineIndex) {
+      if (!file.seekCur(snippetLen)) {
+        break;
+      }
+      continue;
+    }
     if (snippetLen > 0) {
       rec.snippet.resize(snippetLen);
       if (file.read(rec.snippet.data(), snippetLen) != snippetLen) {
@@ -128,34 +196,64 @@ bool HighlightUtil::loadHighlights(const std::string& bookPath, std::vector<High
   return !outRecords.empty();
 }
 
-bool HighlightUtil::saveAllHighlights(const std::string& bookPath, const std::vector<HighlightRecord>& records) {
+bool HighlightUtil::deleteHighlight(const std::string& bookPath, const uint16_t spineIndex,
+                                    const size_t chapterOrdinal) {
   const std::string path = getHighlightPath(bookPath);
-  if (records.empty()) {
-    if (Storage.exists(path.c_str())) {
-      return Storage.remove(path.c_str());
-    }
-    return true;
-  }
+  const std::string tmpPath = path + ".tmp";
 
-  HalFile file = Storage.open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC);
-  if (!file) {
-    LOG_ERR("HLU", "Failed to rewrite %s", path.c_str());
-    return false;
-  }
-  for (const auto& rec : records) {
-    const auto len = static_cast<uint8_t>(std::min(rec.snippet.size(), MAX_SNIPPET_BYTES));
-    uint8_t header[9];
-    memcpy(&header[0], &rec.spineIndex, sizeof(rec.spineIndex));
-    memcpy(&header[2], &rec.pageIndex, sizeof(rec.pageIndex));
-    memcpy(&header[4], &rec.wordStart, sizeof(rec.wordStart));
-    memcpy(&header[6], &rec.wordEnd, sizeof(rec.wordEnd));
-    header[8] = len;
-    if (file.write(header, sizeof(header)) != sizeof(header) || file.write(rec.snippet.data(), len) != len) {
-      LOG_ERR("HLU", "Failed to write highlight record during rewrite");
+  size_t kept = 0;
+  {
+    HalFile in;
+    if (!Storage.openFileForRead("HLU", path, in)) {
       return false;
     }
+    HalFile out = Storage.open(tmpPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC);
+    if (!out) {
+      LOG_ERR("HLU", "Failed to open %s", tmpPath.c_str());
+      return false;
+    }
+
+    uint8_t header[9];
+    uint8_t snippet[MAX_SNIPPET_BYTES];
+    size_t ordinal = 0;
+    while (in.read(header, sizeof(header)) == static_cast<int>(sizeof(header))) {
+      const uint8_t snippetLen = header[8];
+      if (snippetLen > MAX_SNIPPET_BYTES) {
+        break;  // corrupt record: drop it and everything after
+      }
+      if (snippetLen > 0 && in.read(snippet, snippetLen) != snippetLen) {
+        break;
+      }
+      uint16_t spine;
+      memcpy(&spine, &header[0], sizeof(spine));
+      bool skip = false;
+      if (spine == spineIndex) {
+        skip = ordinal == chapterOrdinal;
+        ordinal++;
+      }
+      if (skip) {
+        continue;
+      }
+      if (out.write(header, sizeof(header)) != sizeof(header) ||
+          (snippetLen > 0 && out.write(snippet, snippetLen) != snippetLen)) {
+        LOG_ERR("HLU", "Failed to write highlight record during rewrite");
+        return false;
+      }
+      kept++;
+    }
+    // Both files must be closed before remove/rename below.
+    in.close();
+    out.close();
   }
-  return true;
+
+  if (!Storage.remove(path.c_str())) {
+    LOG_ERR("HLU", "Failed to remove %s", path.c_str());
+    return false;
+  }
+  if (kept == 0) {
+    return Storage.remove(tmpPath.c_str());
+  }
+  return Storage.rename(tmpPath.c_str(), path.c_str());
 }
 
 #endif  // CROSSPOINT_HIGHLIGHT_EXPERIMENT

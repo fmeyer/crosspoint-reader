@@ -76,6 +76,7 @@ class EpubReaderActivity final : public Activity {
   std::unique_ptr<HighlightSelection> highlight;
   bool highlightIncrementalPending = false;
   bool showHighlightMessage = false;
+  StrId highlightMessageId = StrId::STR_HIGHLIGHT_SAVED;
   unsigned long highlightMessageTime = 0UL;
   void enterHighlightMode();
   void exitHighlightMode();
