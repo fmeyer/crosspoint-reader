@@ -1,7 +1,7 @@
 # CrossPoint test firmware — text highlight experiment
 
-**Version:** `1.3.0-dev-claude/branch-from-1-3-0-kicq4d-6346fea`
-**Source:** branch [`claude/branch-from-1-3-0-kicq4d`](https://github.com/fmeyer/crosspoint-reader/tree/claude/branch-from-1-3-0-kicq4d) @ `6346fea`
+**Version:** `1.3.0-dev-claude/branch-from-1-3-0-kicq4d-6a0f971`
+**Source:** branch [`claude/branch-from-1-3-0-kicq4d`](https://github.com/fmeyer/crosspoint-reader/tree/claude/branch-from-1-3-0-kicq4d) @ `6a0f971`
 **Build:** `pio run -e default` (debug build: serial logging on, `LOG_LEVEL=2`, `CROSSPOINT_HIGHLIGHT_EXPERIMENT=1`)
 
 Includes the 1.3.0 baseline, Portuguese hyphenation, and the experimental
@@ -62,3 +62,7 @@ Notes for this experiment build:
 > Rev 6: highlight limit is now 64 per chapter (was 64 per book), and the
 > Highlights browser is two-level — pick a chapter (with highlight counts),
 > then browse/jump/delete that chapter's highlights.
+
+> Rev 7: saved highlights now render as baseline underlines instead of full
+> inversion — subtler, and anti-aliased text stays on for pages with highlights.
+> Live selection still uses inversion for clear feedback.
