@@ -1,7 +1,7 @@
 # CrossPoint test firmware — text highlight experiment
 
-**Version:** `1.3.0-dev-claude/branch-from-1-3-0-kicq4d-706ce4b`
-**Source:** branch [`claude/branch-from-1-3-0-kicq4d`](https://github.com/fmeyer/crosspoint-reader/tree/claude/branch-from-1-3-0-kicq4d) @ `706ce4b`
+**Version:** `1.3.0-dev-claude/branch-from-1-3-0-kicq4d-1f3a562`
+**Source:** branch [`claude/branch-from-1-3-0-kicq4d`](https://github.com/fmeyer/crosspoint-reader/tree/claude/branch-from-1-3-0-kicq4d) @ `1f3a562`
 **Build:** `pio run -e default` (debug build: serial logging on, `LOG_LEVEL=2`, `CROSSPOINT_HIGHLIGHT_EXPERIMENT=1`)
 
 Includes the 1.3.0 baseline, Portuguese hyphenation, and the experimental
@@ -54,3 +54,7 @@ Notes for this experiment build:
 
 > Rev 4: new "Highlights" menu item lists a book's saved highlights — Confirm
 > jumps to the highlight's page, holding Confirm deletes it.
+
+> Rev 5: new Settings → Controls → "Hold Confirm action" option. Set it to
+> "Highlight" and holding Confirm while reading starts a highlight instead of
+> adding a bookmark; "Add Bookmark" then appears in the reader menu.
