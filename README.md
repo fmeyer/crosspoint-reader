@@ -1,19 +1,21 @@
-# CrossPoint test firmware — text highlight experiment
+# CrossPoint test firmware — text highlight experiment (fm-tweaks)
 
-**Version:** `1.3.0-dev-claude/branch-from-1-3-0-kicq4d-614237b`
-**Source:** branch [`claude/branch-from-1-3-0-kicq4d`](https://github.com/fmeyer/crosspoint-reader/tree/claude/branch-from-1-3-0-kicq4d) @ `614237b`
+**Version:** `1.5.0-dev-fm-tweaks-7eb8c26`
+**Source:** branch [`fm-tweaks`](https://github.com/fmeyer/crosspoint-reader/tree/fm-tweaks) @ `7eb8c26`
 **Build:** `pio run -e default` (debug build: serial logging on, `LOG_LEVEL=2`, `CROSSPOINT_HIGHLIGHT_EXPERIMENT=1`)
 
-Includes the 1.3.0 baseline, Portuguese hyphenation, and the experimental
-text highlight mode.
+Rev 10: rebased onto **upstream 1.5.0** (was a stale 1.3.0-dev base — 243 commits
+behind, including the bold style-leak fix and antialiasing fixes). Carries:
+upstream 1.5.0, Portuguese hyphenation, the text highlight experiment, and the
+personal boot logo.
 
-> Rev 2: the original both-side-buttons entry chord turned out to be physically
-> impossible (both side buttons share one ADC resistor ladder), so entry moved
-> to the reader menu and sentence hopping to the front Left/Right buttons.
+> Note: this sandbox-built binary omits upstream's custom-sdkconfig core rebuild
+> (~35 KB extra free heap in official builds) because the build environment
+> cannot reach Espressif's component registry. Functionally identical otherwise.
 
 ## Download
 
-[`firmware.bin`](https://github.com/fmeyer/crosspoint-reader/raw/firmware/highlight-test/firmware.bin) (~5.7 MB, app-only image)
+[`firmware.bin`](https://github.com/fmeyer/crosspoint-reader/raw/firmware/highlight-test/firmware.bin) (~5.6 MB, app-only image)
 
 ## Flash (pick one)
 
@@ -38,37 +40,14 @@ In the EPUB reader, on a text page:
 | **PageBack** ×1 / rapid ×2 / ×3 | Shrink by a word / trim to anchor's sentence / collapse to anchor word |
 | Front **Right** / **Left** | Hop to next / previous sentence start (wraps around the page) |
 | **Confirm** | Save highlight ("Highlight saved." popup) and exit |
-| Reader menu → **Highlights** | List saved highlights: Confirm jumps to the page, hold Confirm deletes |
 | **Back** | Exit without saving |
+| Reader menu → **Highlights** | Chapter list with counts → per-chapter list: Confirm jumps, hold Confirm deletes |
 
-Saved highlights land on the SD card in `/.crosspoint/highlights/<book>.hl`
-(binary records: spine, page, word range, and a text snippet).
+Optional shortcut: Settings → Controls → **"Long-press menu function"** now has a
+**Highlight** option — holding Confirm (~0.4 s) while reading then starts a
+highlight directly (this replaces the separate hold-swap setting from rev 5;
+bookmark toggling is available in the reader menu regardless).
 
-Notes for this experiment build:
-- Anti-aliased (grayscale) text rendering is temporarily disabled while highlight mode is
-  active; it comes back on exit (exit forces a HALF refresh to clear ghosting).
-- Normal reading controls are completely unaffected — page turns have no added latency.
-
-> Rev 3: saved highlights now stay visible — the highlight remains inverted after
-> Confirm, and re-appears whenever you come back to that page.
-
-> Rev 4: new "Highlights" menu item lists a book's saved highlights — Confirm
-> jumps to the highlight's page, holding Confirm deletes it.
-
-> Rev 5: new Settings → Controls → "Hold Confirm action" option. Set it to
-> "Highlight" and holding Confirm while reading starts a highlight instead of
-> adding a bookmark; "Add Bookmark" then appears in the reader menu.
-
-> Rev 6: highlight limit is now 64 per chapter (was 64 per book), and the
-> Highlights browser is two-level — pick a chapter (with highlight counts),
-> then browse/jump/delete that chapter's highlights.
-
-> Rev 7: saved highlights now render as baseline underlines instead of full
-> inversion — subtler, and anti-aliased text stays on for pages with highlights.
-> Live selection still uses inversion for clear feedback.
-
-> Rev 8: boot screen (and default sleep screen fallback) now shows the owner's
-> personal mark instead of the CrossPoint logo.
-
-> Rev 9: fixes the sideways boot logo from rev 8 (bitmaps must be stored
-> pre-rotated for the raw framebuffer copy).
+Saved highlights render as **underlines** and persist in
+`/.crosspoint/highlights/<book>.hl` (limit: 64 per chapter). Anti-aliased text
+stays enabled on pages with highlights; only live selection renders BW.
