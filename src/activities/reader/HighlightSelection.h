@@ -63,6 +63,13 @@ class HighlightSelection {
   uint16_t selectionStart() const { return selStart; }
   uint16_t selectionEnd() const { return selEnd; }
 
+  // Resolve a saved record's word range against this page's text. When
+  // trustIndices is set and the text at [start,end] still begins with the
+  // snippet, the stored range is kept; otherwise the snippet is searched in the
+  // page text and start/end are remapped to the matching words (re-pagination
+  // repair). Returns false when the snippet is not on this page.
+  bool resolveSnippet(const std::string& snippet, uint16_t& start, uint16_t& end, bool trustIndices) const;
+
   static constexpr unsigned long MULTI_PRESS_MS = 450;
 
  private:

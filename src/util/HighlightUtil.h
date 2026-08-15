@@ -9,16 +9,26 @@
 
 // Persists text highlights per book as an append-only binary file:
 // /.crosspoint/highlights/<flattened-book-name>.hl
-// Record layout (little-endian): u16 spineIndex, u16 pageIndex, u16 wordStart,
-// u16 wordEnd, u8 snippetLen, snippetLen bytes of UTF-8 snippet text.
+// v2 files start with the 4-byte magic "HLV2"; each record is then
+// (little-endian): u16 spineIndex, u16 pageIndex, u32 pageVisibleOffset,
+// u16 wordStart, u16 wordEnd, u8 snippetLen, snippetLen bytes of UTF-8 snippet.
+// Files without the magic are v1 (no offset field); they parse transparently
+// and are rewritten as v2 on the first save.
 // The snippet is the durable ground truth: word indices are only valid for the
-// layout settings active when the highlight was created.
+// layout settings active when the highlight was created. pageVisibleOffset (the
+// visible-codepoint offset where the record's page started) anchors the record
+// to content, so it survives re-pagination the way bookmarks do.
 struct HighlightRecord {
-  uint16_t spineIndex;
-  uint16_t pageIndex;
-  uint16_t wordStart;
-  uint16_t wordEnd;
+  static constexpr uint32_t NO_OFFSET = 0xFFFFFFFFu;
+
+  uint16_t spineIndex = 0;
+  uint16_t pageIndex = 0;
+  uint32_t pageVisibleOffset = NO_OFFSET;
+  uint16_t wordStart = 0;
+  uint16_t wordEnd = 0;
   std::string snippet;
+
+  bool hasOffset() const { return pageVisibleOffset != NO_OFFSET; }
 };
 
 struct ChapterHighlightCount {
@@ -30,12 +40,14 @@ class HighlightUtil {
  public:
   static std::string getHighlightsDir();
   static std::string getHighlightPath(const std::string& bookPath);
-  static bool saveHighlight(const std::string& bookPath, uint16_t spineIndex, uint16_t pageIndex, uint16_t wordStart,
-                            uint16_t wordEnd, const std::string& snippet);
-  // Collect the saved [wordStart, wordEnd] ranges for one page. Returns false when
-  // the book has no highlight file or the page has no records.
-  static bool loadHighlightsForPage(const std::string& bookPath, uint16_t spineIndex, uint16_t pageIndex,
-                                    std::vector<std::pair<uint16_t, uint16_t>>& outRanges);
+  static bool saveHighlight(const std::string& bookPath, uint16_t spineIndex, uint16_t pageIndex,
+                            uint32_t pageVisibleOffset, uint16_t wordStart, uint16_t wordEnd,
+                            const std::string& snippet);
+  // Header-only scan of one chapter: page/offset/word-range data in file order,
+  // snippets left empty (no string allocations). Ordinals match
+  // loadChapterHighlights, which reads the same records with snippets.
+  static bool loadChapterRecordInfo(const std::string& bookPath, uint16_t spineIndex,
+                                    std::vector<HighlightRecord>& outRecords);
   // Header-only scan: per-chapter record counts (sorted by spine index). Cheap —
   // no snippet text is read, so it is safe for any number of highlights.
   static bool loadChapterCounts(const std::string& bookPath, std::vector<ChapterHighlightCount>& outCounts);

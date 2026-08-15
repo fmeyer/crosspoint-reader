@@ -473,4 +473,36 @@ std::string HighlightSelection::selectedText() const {
   return textPool.substr(startOff, endOff - startOff);
 }
 
+bool HighlightSelection::resolveSnippet(const std::string& snippet, uint16_t& start, uint16_t& end,
+                                        const bool trustIndices) const {
+  if (rects.empty() || snippet.empty()) {
+    return false;
+  }
+  const auto last = static_cast<uint16_t>(rects.size() - 1);
+  if (trustIndices && start <= end && end <= last) {
+    // Snippets are capped at MAX_SNIPPET_BYTES, so compare only the shared prefix.
+    const size_t a = textOffset[start];
+    const size_t b = textOffset[end + 1] - 1;  // drop the trailing joiner space
+    const size_t n = std::min(snippet.size(), b - a);
+    if (n > 0 && textPool.compare(a, n, snippet, 0, n) == 0) {
+      return true;
+    }
+  }
+  // Layout changed under the stored indices: the snippet is the ground truth.
+  // Word text and joiner spaces are layout-independent, so an exact byte match
+  // finds the same content wherever it now sits on the page.
+  const size_t pos = textPool.find(snippet);
+  if (pos == std::string::npos) {
+    return false;
+  }
+  // Map byte positions back to word indices: word i spans
+  // [textOffset[i], textOffset[i+1]), and upper_bound finds the span holding pos.
+  const auto startIt = std::upper_bound(textOffset.begin(), textOffset.end(), static_cast<uint16_t>(pos));
+  const auto endIt =
+      std::upper_bound(textOffset.begin(), textOffset.end(), static_cast<uint16_t>(pos + snippet.size() - 1));
+  start = static_cast<uint16_t>(std::distance(textOffset.begin(), startIt) - 1);
+  end = std::min(static_cast<uint16_t>(std::distance(textOffset.begin(), endIt) - 1), last);
+  return start <= end;
+}
+
 #endif  // CROSSPOINT_HIGHLIGHT_EXPERIMENT

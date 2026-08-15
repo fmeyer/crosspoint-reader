@@ -109,7 +109,14 @@ void EpubReaderHighlightsActivity::loop() {
       return;
     }
     const auto& rec = highlights.at(selectorIndex);
-    setResult(ProgressChangeResult{rec.spineIndex, rec.pageIndex});
+    ProgressChangeResult result{rec.spineIndex, rec.pageIndex};
+    if (rec.hasOffset()) {
+      // Content anchor: the reader's offset-jump path lands on the right page
+      // even when the layout has changed since the highlight was saved.
+      result.hasVisibleTextOffset = true;
+      result.visibleTextOffset = rec.pageVisibleOffset;
+    }
+    setResult(std::move(result));
     finish();
     return;
   }

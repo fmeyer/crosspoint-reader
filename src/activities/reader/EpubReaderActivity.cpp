@@ -1651,11 +1651,56 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   // planes or the image double-refresh re-render.
   std::vector<std::pair<uint16_t, uint16_t>> savedHighlightRanges;
   HighlightSelection savedSelection;
-  if (epub && section &&
-      HighlightUtil::loadHighlightsForPage(epub->getPath(), static_cast<uint16_t>(currentSpineIndex),
-                                           static_cast<uint16_t>(section->currentPage), savedHighlightRanges)) {
-    savedSelection.buildFromPage(*page, renderer, fontId, orientedMarginLeft, orientedMarginTop,
-                                 SETTINGS.getReaderLineCompression());
+  if (epub && section) {
+    // Header-only scan first (no snippet strings): most pages have no
+    // highlights and pay only one cheap file pass per render.
+    std::vector<HighlightRecord> recordInfo;
+    HighlightUtil::loadChapterRecordInfo(epub->getPath(), static_cast<uint16_t>(currentSpineIndex), recordInfo);
+    const auto curPage = static_cast<uint16_t>(section->currentPage);
+    std::vector<size_t> candidates;  // chapter ordinals, matched below
+    for (size_t i = 0; i < recordInfo.size(); i++) {
+      const auto& rec = recordInfo[i];
+      uint16_t recPage = rec.pageIndex;
+      bool offsetResolved = false;
+      if (rec.hasOffset()) {
+        // Content anchor: immune to re-pagination, unlike the stored page number.
+        if (const auto p = section->getPageForVisibleTextOffset(rec.pageVisibleOffset)) {
+          recPage = *p;
+          offsetResolved = true;
+        }
+      }
+      // The offset anchors the record's original page *start*; after a layout
+      // change that page's content can spill a few pages further, so nearby
+      // following pages also try the snippet match below.
+      if (recPage == curPage || (offsetResolved && curPage > recPage && curPage <= recPage + 3)) {
+        if (candidates.empty()) {
+          candidates.reserve(4);
+        }
+        candidates.push_back(i);
+      }
+    }
+    if (!candidates.empty() && savedSelection.buildFromPage(*page, renderer, fontId, orientedMarginLeft,
+                                                            orientedMarginTop, SETTINGS.getReaderLineCompression())) {
+      std::vector<HighlightRecord> records;  // full read, snippets included (same ordinals)
+      HighlightUtil::loadChapterHighlights(epub->getPath(), static_cast<uint16_t>(currentSpineIndex), records);
+      savedHighlightRanges.reserve(std::min(candidates.size(), HighlightUtil::MAX_PAGE_HIGHLIGHTS));
+      for (const size_t ord : candidates) {
+        if (ord >= records.size()) {
+          break;
+        }
+        const auto& rec = records[ord];
+        uint16_t wordStart = rec.wordStart;
+        uint16_t wordEnd = rec.wordEnd;
+        // Stored indices are only trusted when the record's own page number
+        // still matches (layout unchanged); otherwise the snippet decides.
+        if (savedSelection.resolveSnippet(rec.snippet, wordStart, wordEnd, rec.pageIndex == curPage)) {
+          savedHighlightRanges.emplace_back(wordStart, wordEnd);
+          if (savedHighlightRanges.size() >= HighlightUtil::MAX_PAGE_HIGHLIGHTS) {
+            break;
+          }
+        }
+      }
+    }
   }
   const auto paintSavedHighlights = [&] {
     if (savedSelection.isBuilt()) {
@@ -2132,14 +2177,23 @@ void EpubReaderActivity::handleHighlightModeInput() {
       return;
     }
     if (highlight->isBuilt() && section) {
+      // Content anchor for the record: the page's visible-codepoint offset makes
+      // it resolvable after any re-pagination. Captured at page load; the direct
+      // lookup is a rare fallback.
+      const uint32_t pageOffset =
+          currentPageVisibleOffset.has_value()
+              ? *currentPageVisibleOffset
+              : section->getVisibleTextOffsetForPage(static_cast<uint16_t>(section->currentPage))
+                    .value_or(HighlightRecord::NO_OFFSET);
       if (HighlightUtil::countChapterHighlights(epub->getPath(), static_cast<uint16_t>(currentSpineIndex)) >=
           HighlightUtil::MAX_CHAPTER_HIGHLIGHTS) {
         highlightMessageId = StrId::STR_HIGHLIGHT_LIMIT_REACHED;
         showHighlightMessage = true;
         highlightMessageTime = millis();
       } else if (HighlightUtil::saveHighlight(epub->getPath(), static_cast<uint16_t>(currentSpineIndex),
-                                              static_cast<uint16_t>(section->currentPage), highlight->selectionStart(),
-                                              highlight->selectionEnd(), highlight->selectedText())) {
+                                              static_cast<uint16_t>(section->currentPage), pageOffset,
+                                              highlight->selectionStart(), highlight->selectionEnd(),
+                                              highlight->selectedText())) {
         highlightMessageId = StrId::STR_HIGHLIGHT_SAVED;
         showHighlightMessage = true;
         highlightMessageTime = millis();
