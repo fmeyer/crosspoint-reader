@@ -26,6 +26,11 @@ class EpubReaderHighlightsActivity final : public Activity {
   int chapterIndex = 0;
   int selectorIndex = 0;
   int confirmingDelete = 0;  // 0 = hide dialog, 1 = show dialog, 2 = allow confirmation to delete
+  // Markdown export (hold Confirm on the chapter list): the popup shows until
+  // the timeout, and the hold's release must not open a chapter.
+  bool showExportMessage = false;
+  unsigned long exportMessageTime = 0UL;
+  bool ignoreNextConfirmRelease = false;
 
  public:
   explicit EpubReaderHighlightsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,

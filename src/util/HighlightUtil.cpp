@@ -300,6 +300,53 @@ bool HighlightUtil::loadChapterHighlights(const std::string& bookPath, const uin
   return !outRecords.empty();
 }
 
+bool HighlightUtil::exportMarkdown(const std::string& bookPath, const std::string& bookTitle,
+                                   std::string (*titleFn)(void* ctx, uint16_t spineIndex), void* ctx) {
+  std::vector<ChapterHighlightCount> counts;
+  if (!loadChapterCounts(bookPath, counts)) {
+    return false;  // nothing saved for this book
+  }
+
+  // "/<book-stem> highlights.md" at the SD root, book stem flattened the same
+  // way as the .hl file name.
+  std::string stem = std::string(bookPath).erase(0, 1);
+  std::replace(stem.begin(), stem.end(), '/', '_');
+  std::replace(stem.begin(), stem.end(), '\\', '_');
+  const size_t lastDot = stem.find_last_of('.');
+  if (lastDot != std::string::npos) {
+    stem.erase(lastDot);
+  }
+  const std::string outPath = "/" + stem + " highlights.md";
+
+  HalFile out = Storage.open(outPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC);
+  if (!out) {
+    LOG_ERR("HLU", "Failed to open %s", outPath.c_str());
+    return false;
+  }
+  const auto writeStr = [&out](const std::string& s) { return out.write(s.data(), s.size()) == s.size(); };
+
+  if (!writeStr("# " + (bookTitle.empty() ? stem : bookTitle) + "\n")) {
+    LOG_ERR("HLU", "Failed to write %s", outPath.c_str());
+    return false;
+  }
+  for (const auto& chapter : counts) {
+    std::vector<HighlightRecord> records;
+    if (!loadChapterHighlights(bookPath, chapter.spineIndex, records)) {
+      continue;
+    }
+    std::string block = "\n## " + titleFn(ctx, chapter.spineIndex) + "\n";
+    for (const auto& rec : records) {
+      block += "\n> " + rec.snippet + "\n";
+    }
+    if (!writeStr(block)) {
+      LOG_ERR("HLU", "Failed to write %s", outPath.c_str());
+      return false;
+    }
+  }
+  LOG_INF("HLU", "Exported highlights to %s", outPath.c_str());
+  return true;
+}
+
 bool HighlightUtil::deleteHighlight(const std::string& bookPath, const uint16_t spineIndex,
                                     const size_t chapterOrdinal) {
   const std::string path = getHighlightPath(bookPath);

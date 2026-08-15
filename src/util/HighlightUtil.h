@@ -59,6 +59,13 @@ class HighlightUtil {
   // Remove the Nth record (file order) of one chapter via a streaming rewrite to a
   // temp file — constant RAM regardless of how many highlights the book holds.
   static bool deleteHighlight(const std::string& bookPath, uint16_t spineIndex, size_t chapterOrdinal);
+  // Write every highlight to "/<book-stem> highlights.md" at the SD root:
+  // "# title", "## chapter" per chapter, "> snippet" per record. Streams chapter
+  // by chapter, so transient RAM stays bounded by one chapter's records.
+  // titleFn(ctx, spine) supplies each chapter heading (plain function pointer +
+  // context, no std::function).
+  static bool exportMarkdown(const std::string& bookPath, const std::string& bookTitle,
+                             std::string (*titleFn)(void* ctx, uint16_t spineIndex), void* ctx);
 
   static constexpr size_t MAX_SNIPPET_BYTES = 120;
   static constexpr size_t MAX_PAGE_HIGHLIGHTS = 32;

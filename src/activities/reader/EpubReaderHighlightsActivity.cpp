@@ -18,6 +18,7 @@ constexpr int DELETE_MODE_DISPLAY = 1;
 constexpr int DELETE_MODE_CONFIRM = 2;
 
 constexpr int LINE_HEIGHT = 60;
+constexpr unsigned long EXPORT_MESSAGE_DURATION_MS = 2500;
 }  // namespace
 
 void EpubReaderHighlightsActivity::onEnter() {
@@ -66,6 +67,11 @@ int EpubReaderHighlightsActivity::getListHeight(const GfxRenderer& renderer) {
 }
 
 void EpubReaderHighlightsActivity::loop() {
+  if (showExportMessage && (millis() - exportMessageTime) >= EXPORT_MESSAGE_DURATION_MS) {
+    showExportMessage = false;
+    requestUpdate();
+  }
+
   // Delete confirmation mode (chapter view only)
   if (confirmingDelete >= DELETE_MODE_DISPLAY) {
     if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
@@ -99,6 +105,11 @@ void EpubReaderHighlightsActivity::loop() {
   }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {  // Open
+    if (ignoreNextConfirmRelease) {
+      // Release of the hold that triggered the export.
+      ignoreNextConfirmRelease = false;
+      return;
+    }
     if (!inChapter) {
       if (!chapters.empty()) {
         openChapter(selectorIndex);
@@ -138,6 +149,21 @@ void EpubReaderHighlightsActivity::loop() {
       return;
     }
     confirmingDelete = DELETE_MODE_DISPLAY;
+    requestUpdate();
+  }
+
+  // Hold Confirm on the chapter list: export the whole book's highlights as
+  // Markdown next to the books on the SD card.
+  if (!inChapter && !chapters.empty() && !ignoreNextConfirmRelease &&
+      mappedInput.isPressed(MappedInputManager::Button::Confirm) && mappedInput.getHeldTime() > ENTER_DELETE_MODE_MS) {
+    ignoreNextConfirmRelease = true;  // the hold's release must not open a chapter
+    const auto titleFn = [](void* ctx, const uint16_t spineIndex) {
+      return static_cast<EpubReaderHighlightsActivity*>(ctx)->chapterTitle(spineIndex);
+    };
+    if (HighlightUtil::exportMarkdown(epubPath, epub ? epub->getTitle() : "", titleFn, this)) {
+      showExportMessage = true;
+      exportMessageTime = millis();
+    }
     requestUpdate();
   }
 
@@ -196,9 +222,15 @@ void EpubReaderHighlightsActivity::render(RenderLock&&) {
     if (!chapters.empty()) {
       GUI.drawList(renderer, Rect{contentX, listY, contentWidth, listHeight}, chapters.size(), selectorIndex, getTitle,
                    nullptr, nullptr, getValue);
+      GUI.drawHelpText(renderer, Rect{contentX, pageHeight - hintGutterBottom, contentWidth, LINE_HEIGHT},
+                       tr(STR_HOLD_OPEN_TO_EXPORT));
     } else {
       GUI.drawHelpText(renderer, Rect{contentX, LINE_HEIGHT * 2, contentWidth, LINE_HEIGHT},
                        tr(STR_HIGHLIGHT_INSTRUCTIONS));
+    }
+
+    if (showExportMessage) {
+      GUI.drawPopup(renderer, tr(STR_HIGHLIGHTS_EXPORTED));
     }
 
     const auto labels =
