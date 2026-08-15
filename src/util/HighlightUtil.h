@@ -56,6 +56,10 @@ class HighlightUtil {
                                     std::vector<HighlightRecord>& outRecords);
   // Number of records for one chapter (header scan, no snippets).
   static size_t countChapterHighlights(const std::string& bookPath, uint16_t spineIndex);
+  // True when a record with the same spine, page, and word range already exists
+  // (header-only scan). Guards against accidental double saves.
+  static bool isDuplicate(const std::string& bookPath, uint16_t spineIndex, uint16_t pageIndex, uint16_t wordStart,
+                          uint16_t wordEnd);
   // Remove the Nth record (file order) of one chapter via a streaming rewrite to a
   // temp file — constant RAM regardless of how many highlights the book holds.
   static bool deleteHighlight(const std::string& bookPath, uint16_t spineIndex, size_t chapterOrdinal);

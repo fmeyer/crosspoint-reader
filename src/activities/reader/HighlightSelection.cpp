@@ -473,6 +473,16 @@ std::string HighlightSelection::selectedText() const {
   return textPool.substr(startOff, endOff - startOff);
 }
 
+bool HighlightSelection::anchorCenter(int& x, int& y) const {
+  if (rects.empty()) {
+    return false;
+  }
+  const WordRect& r = rects[anchor];
+  x = r.x + r.w / 2;
+  y = r.y + lineH / 2;
+  return true;
+}
+
 bool HighlightSelection::resolveSnippet(const std::string& snippet, uint16_t& start, uint16_t& end,
                                         const bool trustIndices) const {
   if (rects.empty() || snippet.empty()) {

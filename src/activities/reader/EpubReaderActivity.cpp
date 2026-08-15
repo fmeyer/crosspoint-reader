@@ -2013,7 +2013,19 @@ void EpubReaderActivity::renderStatusBar() const {
   int textYOffset = 0;
   const auto sb = SETTINGS.statusBarSpec();
 
-  if (automaticPageTurnActive) {
+#if CROSSPOINT_HIGHLIGHT_EXPERIMENT
+  // Highlight mode hijacks the title (same precedent as auto page turn) so the
+  // status bar names the current phase: picking the start word vs. selecting.
+  const bool highlightTitle = highlightModeActive();
+#else
+  constexpr bool highlightTitle = false;
+#endif
+
+  if (highlightTitle) {
+#if CROSSPOINT_HIGHLIGHT_EXPERIMENT
+    title = I18N.get(highlightAnchored ? StrId::STR_HIGHLIGHT : StrId::STR_SELECT_START);
+#endif
+  } else if (automaticPageTurnActive) {
     title = tr(STR_AUTO_TURN_ENABLED) + std::to_string(60 * 1000 / pageTurnDuration);
 
     // calculates textYOffset when rendering title in status bar
@@ -2114,6 +2126,44 @@ void EpubReaderActivity::loadCachedBookmarks() {
 }
 
 #if CROSSPOINT_HIGHLIGHT_EXPERIMENT
+void EpubReaderActivity::openDictionaryFromHighlight() {
+  if (SETTINGS.dictionaryName[0] == '\0') {
+    showDictionaryMessage = true;
+    dictionaryMessageTime = millis();
+    requestUpdate();
+    return;
+  }
+  if (!section || !highlight || !highlight->isBuilt()) {
+    return;
+  }
+  int anchorX = 0;
+  int anchorY = 0;
+  if (!highlight->anchorCenter(anchorX, anchorY)) {
+    return;
+  }
+  auto page = section->loadPage(section->currentPage);
+  if (!page) {
+    return;
+  }
+
+  // Word geometry must match render(): viewable-area margins plus screen margin.
+  int orientedMarginTop, orientedMarginRight, orientedMarginBottom, orientedMarginLeft;
+  renderer.getOrientedViewableTRBL(&orientedMarginTop, &orientedMarginRight, &orientedMarginBottom,
+                                   &orientedMarginLeft);
+  orientedMarginTop += SETTINGS.screenMargin;
+  orientedMarginLeft += SETTINGS.screenMargin;
+
+  startActivityForResult(
+      std::make_unique<DictionaryWordSelectActivity>(renderer, mappedInput, std::move(page), orientedMarginLeft,
+                                                     orientedMarginTop, anchorX, anchorY, /*lookupOnEnter=*/true),
+      [this](const ActivityResult&) {
+        // The lookup activity consumed the triggering hold's release; the next
+        // Confirm release is a fresh plant/save again.
+        ignoreNextConfirmRelease = false;
+        requestUpdate();
+      });
+}
+
 void EpubReaderActivity::enterHighlightMode() {
   highlight = makeUniqueNoThrow<HighlightSelection>();
   if (!highlight) {
@@ -2145,6 +2195,19 @@ void EpubReaderActivity::handleHighlightModeInput() {
   // resetting `highlight` via one of the exits below — races the builder and
   // frees the object under it. Drop input during that short window.
   if (!highlight->wasBuildAttempted()) {
+    return;
+  }
+
+  // Hold Confirm (either phase): dictionary lookup of the anchor/cursor word.
+  // Requires the entry hold to have fully released first, so a long mode-entry
+  // press can't fall straight through into a lookup.
+  constexpr unsigned long HIGHLIGHT_DICT_HOLD_MS = 700;
+  if (!ignoreNextConfirmRelease && highlight->isBuilt() && mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
+      mappedInput.getHeldTime() >= HIGHLIGHT_DICT_HOLD_MS) {
+    // The hold's release must not plant/save. When the lookup activity launches
+    // it consumes the release itself; its result callback clears the flag.
+    ignoreNextConfirmRelease = true;
+    openDictionaryFromHighlight();
     return;
   }
 
@@ -2185,8 +2248,14 @@ void EpubReaderActivity::handleHighlightModeInput() {
               ? *currentPageVisibleOffset
               : section->getVisibleTextOffsetForPage(static_cast<uint16_t>(section->currentPage))
                     .value_or(HighlightRecord::NO_OFFSET);
-      if (HighlightUtil::countChapterHighlights(epub->getPath(), static_cast<uint16_t>(currentSpineIndex)) >=
-          HighlightUtil::MAX_CHAPTER_HIGHLIGHTS) {
+      if (HighlightUtil::isDuplicate(epub->getPath(), static_cast<uint16_t>(currentSpineIndex),
+                                     static_cast<uint16_t>(section->currentPage), highlight->selectionStart(),
+                                     highlight->selectionEnd())) {
+        highlightMessageId = StrId::STR_HIGHLIGHT_DUPLICATE;
+        showHighlightMessage = true;
+        highlightMessageTime = millis();
+      } else if (HighlightUtil::countChapterHighlights(epub->getPath(), static_cast<uint16_t>(currentSpineIndex)) >=
+                 HighlightUtil::MAX_CHAPTER_HIGHLIGHTS) {
         highlightMessageId = StrId::STR_HIGHLIGHT_LIMIT_REACHED;
         showHighlightMessage = true;
         highlightMessageTime = millis();

@@ -48,11 +48,18 @@ void DictionaryWordSelectActivity::onEnter() {
   // full-repaint path as the fallback.
   snapshot = makeUniqueNoThrow<uint8_t[]>(SNAPSHOT_CAPACITY);
   extractWords();
-  // Start on the middle row's word nearest mid-screen instead of top-left:
-  // any word on the page is then at most half a page of moves away.
+  // Start on the caller-provided word when given, else the middle row's word
+  // nearest mid-screen instead of top-left: any word on the page is then at
+  // most half a page of moves away.
   if (!words.empty()) {
-    const int initial = closestInRow(rowCount / 2, renderer.getScreenWidth() / 2);
+    int initial = initialX >= 0 ? wordAt(initialX, initialY) : -1;
+    if (initial < 0) {
+      autoLookupPending = false;  // the requested word isn't selectable: stay interactive
+      initial = closestInRow(rowCount / 2, renderer.getScreenWidth() / 2);
+    }
     if (initial >= 0) selected = initial;
+  } else {
+    autoLookupPending = false;
   }
   requestUpdate();
 }
@@ -227,6 +234,12 @@ void DictionaryWordSelectActivity::performLookup() {
 }
 
 void DictionaryWordSelectActivity::loop() {
+  if (autoLookupPending) {
+    autoLookupPending = false;
+    performLookup();
+    return;
+  }
+
   if (popup == Popup::NotFound || popup == Popup::Error) {
     if (millis() - popupTime >= POPUP_DURATION_MS) {
       popup = Popup::None;

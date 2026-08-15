@@ -209,6 +209,7 @@ class EpubReaderActivity final : public Activity {
   void enterHighlightMode();
   void exitHighlightMode();
   void handleHighlightModeInput();
+  void openDictionaryFromHighlight();
   bool highlightModeActive() const { return static_cast<bool>(highlight); }
 #else
   static constexpr bool highlightModeActive() { return false; }

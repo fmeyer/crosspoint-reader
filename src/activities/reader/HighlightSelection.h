@@ -62,6 +62,8 @@ class HighlightSelection {
   std::string selectedText() const;
   uint16_t selectionStart() const { return selStart; }
   uint16_t selectionEnd() const { return selEnd; }
+  // Screen-space center of the anchor word (dictionary lookup hand-off).
+  bool anchorCenter(int& x, int& y) const;
 
   // Resolve a saved record's word range against this page's text. When
   // trustIndices is set and the text at [start,end] still begins with the

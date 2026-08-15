@@ -15,12 +15,19 @@
 // touch-down moves the highlight and a tap on a word looks it up directly.
 class DictionaryWordSelectActivity final : public Activity {
  public:
+  // initialX/initialY (screen coords) preselect the word at that point instead
+  // of the mid-screen default; lookupOnEnter additionally looks it up right
+  // away (highlight mode's hold-Confirm hand-off). Both are optional.
   explicit DictionaryWordSelectActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
-                                        std::unique_ptr<Page> page, int marginLeft, int marginTop)
+                                        std::unique_ptr<Page> page, int marginLeft, int marginTop, int initialX = -1,
+                                        int initialY = -1, bool lookupOnEnter = false)
       : Activity("DictionaryWordSelect", renderer, mappedInput),
         page(std::move(page)),
         marginLeft(marginLeft),
-        marginTop(marginTop) {}
+        marginTop(marginTop),
+        initialX(initialX),
+        initialY(initialY),
+        autoLookupPending(lookupOnEnter) {}
 
   void onEnter() override;
   void loop() override;
@@ -51,6 +58,11 @@ class DictionaryWordSelectActivity final : public Activity {
   std::unique_ptr<Page> page;
   const int marginLeft;
   const int marginTop;
+  const int initialX;
+  const int initialY;
+  // One-shot lookup of the preselected word on the first loop() pass; cleared
+  // in onEnter when the initial point hits no selectable word.
+  bool autoLookupPending;
   int fontId = 0;
   int lineHeight = 0;
 

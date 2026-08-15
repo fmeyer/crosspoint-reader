@@ -167,6 +167,25 @@ size_t HighlightUtil::countChapterHighlights(const std::string& bookPath, const 
   return count;
 }
 
+bool HighlightUtil::isDuplicate(const std::string& bookPath, const uint16_t spineIndex, const uint16_t pageIndex,
+                                const uint16_t wordStart, const uint16_t wordEnd) {
+  HalFile file;
+  bool isV2 = false;
+  if (!openHighlightFile(getHighlightPath(bookPath), file, isV2)) {
+    return false;
+  }
+  RecordHeader h;
+  while (readRecordHeader(file, isV2, h)) {
+    if (h.spine == spineIndex && h.page == pageIndex && h.wordStart == wordStart && h.wordEnd == wordEnd) {
+      return true;
+    }
+    if (!file.seekCur(h.snippetLen)) {
+      break;
+    }
+  }
+  return false;
+}
+
 bool HighlightUtil::saveHighlight(const std::string& bookPath, const uint16_t spineIndex, const uint16_t pageIndex,
                                   const uint32_t pageVisibleOffset, const uint16_t wordStart, const uint16_t wordEnd,
                                   const std::string& snippet) {
