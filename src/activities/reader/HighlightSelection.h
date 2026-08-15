@@ -17,8 +17,11 @@ class Page;
 // FAST_REFRESH with no SD reload or page re-render.
 class HighlightSelection {
  public:
+  // startAtCenter: place the initial cursor on the middle row's word nearest
+  // mid-screen (anchor-picker mode) instead of the page's first word — any word
+  // is then at most half a page of moves away.
   bool buildFromPage(const Page& page, const GfxRenderer& renderer, int fontId, int marginLeft, int marginTop,
-                     float lineCompression);
+                     float lineCompression, bool startAtCenter = false);
   bool isBuilt() const { return !rects.empty(); }
   // True only once buildFromPage has RETURNED (success or empty). The main loop
   // must not operate on — or free — this object before then: the build runs on
@@ -32,6 +35,18 @@ class HighlightSelection {
   // MULTI_PRESS_MS escalate word -> sentence -> paragraph. Returns true when the
   // selection changed.
   bool onSinglePress(bool forward);
+
+  // --- Anchor-picker phase (cursor = collapsed selection on the anchor) ---
+  // Side-button press while picking the anchor: single press steps one word,
+  // a rapid second press within MULTI_PRESS_MS hops a whole sentence instead.
+  bool onCursorPress(bool forward);
+  // Step the cursor by delta words, clamped to the page bounds.
+  bool moveCursor(int delta);
+  // Move the cursor one screen line down/up, landing on the word whose
+  // x-center is closest to the current word's (dictionary-picker behavior).
+  bool moveCursorLine(bool down);
+  // Phase 2 -> 1 Back: drop any extension, keep the cursor on the anchor.
+  void collapseToAnchor();
 
   // Full-render path: invert the current selection into a freshly rendered page.
   void paintCurrent(const GfxRenderer& renderer);
@@ -56,6 +71,7 @@ class HighlightSelection {
     int16_t y;
     uint16_t w;
     uint8_t flags;
+    uint8_t row;  // line ordinal on the page, for vertical cursor moves (fills existing padding)
   };
   static constexpr uint8_t FLAG_SENTENCE_START = 0x01;
   static constexpr uint8_t FLAG_PARA_START = 0x02;
@@ -67,7 +83,8 @@ class HighlightSelection {
   std::string textPool;              // space-joined page text (snippet extraction)
   std::vector<uint16_t> textOffset;  // rects.size() + 1 entries (sentinel at end)
   int lineH = 0;
-  int ascender = 0;  // baseline offset from line top, for underline placement
+  int ascender = 0;       // baseline offset from line top, for underline placement
+  uint16_t rowCount = 0;  // screen lines carrying words
 
   uint16_t anchor = 0;
   uint16_t selStart = 0;
@@ -86,6 +103,9 @@ class HighlightSelection {
   uint16_t scanBackFlag(uint16_t from, uint8_t flag) const;
   uint16_t scanEndFlag(uint16_t from, uint8_t flag) const;
   void paintRange(const GfxRenderer& renderer, uint16_t a, uint16_t b) const;
+  // Index of the word in `row` whose x-center is closest to centerX; -1 when
+  // the row has no words.
+  int closestInRow(uint8_t row, int centerX) const;
 };
 
 #endif  // CROSSPOINT_HIGHLIGHT_EXPERIMENT

@@ -10,6 +10,8 @@
 #include <Logging.h>
 
 #include <algorithm>
+#include <climits>
+#include <cstdlib>
 
 namespace {
 
@@ -72,7 +74,8 @@ bool startsWithEmSpace(const char* word, const size_t len) {
 }  // namespace
 
 bool HighlightSelection::buildFromPage(const Page& page, const GfxRenderer& renderer, const int fontId,
-                                       const int marginLeft, const int marginTop, const float lineCompression) {
+                                       const int marginLeft, const int marginTop, const float lineCompression,
+                                       const bool startAtCenter) {
   // buildTried is set on the way OUT, never here: it runs on the render task
   // while the main loop polls wasBuildAttempted(), and flipping it before the
   // model is complete lets the loop conclude "attempted but empty" mid-build
@@ -80,6 +83,7 @@ bool HighlightSelection::buildFromPage(const Page& page, const GfxRenderer& rend
   rects.clear();
   textPool.clear();
   textOffset.clear();
+  rowCount = 0;
 
   lineH = static_cast<int>(static_cast<float>(renderer.getLineHeight(fontId)) * lineCompression);
   if (lineH <= 0) {
@@ -156,9 +160,11 @@ bool HighlightSelection::buildFromPage(const Page& page, const GfxRenderer& rend
       textPool.append(word, block->wordTextLen(i));
       textPool += ' ';
       rects.push_back({static_cast<int16_t>(lineX + block->wordXpos(i)), static_cast<int16_t>(lineY),
-                       static_cast<uint16_t>(std::max(w, 1)), flags});
+                       static_cast<uint16_t>(std::max(w, 1)), flags,
+                       static_cast<uint8_t>(std::min<uint16_t>(rowCount, 255))});
       prevEndsSentence = endsSentence(word, block->wordTextLen(i));
     }
+    rowCount++;
 
     prevLineY = lineY;
     firstLine = false;
@@ -166,6 +172,13 @@ bool HighlightSelection::buildFromPage(const Page& page, const GfxRenderer& rend
   textOffset.push_back(static_cast<uint16_t>(textPool.size()));
 
   anchor = selStart = selEnd = 0;
+  if (startAtCenter && !rects.empty()) {
+    const int initial =
+        closestInRow(static_cast<uint8_t>(std::min<uint16_t>(rowCount / 2, 255)), renderer.getScreenWidth() / 2);
+    if (initial >= 0) {
+      anchor = selStart = selEnd = static_cast<uint16_t>(initial);
+    }
+  }
   paintedStart = paintedEnd = 0;
   hasPainted = false;
   pressLevel = 0;
@@ -228,6 +241,79 @@ bool HighlightSelection::onSinglePress(const bool forward) {
     applyBack(pressLevel);
   }
   return selStart != oldStart || selEnd != oldEnd;
+}
+
+bool HighlightSelection::onCursorPress(const bool forward) {
+  if (rects.empty()) {
+    return false;
+  }
+  const unsigned long now = millis();
+  const bool rapid = pressLevel > 0 && forward == lastPressForward && now - lastPressTime <= MULTI_PRESS_MS;
+  pressLevel = 1;
+  lastPressForward = forward;
+  lastPressTime = now;
+  if (rapid) {
+    // Sentence-length travel; sentenceHop zeroes pressLevel, so restore the
+    // press state to keep further rapid presses hopping.
+    const bool changed = sentenceHop(forward);
+    pressLevel = 1;
+    lastPressForward = forward;
+    lastPressTime = now;
+    return changed;
+  }
+  return moveCursor(forward ? 1 : -1);
+}
+
+bool HighlightSelection::moveCursor(const int delta) {
+  if (rects.empty()) {
+    return false;
+  }
+  const int last = static_cast<int>(rects.size()) - 1;
+  const int idx = std::clamp(static_cast<int>(anchor) + delta, 0, last);
+  if (static_cast<uint16_t>(idx) == anchor) {
+    return false;
+  }
+  anchor = selStart = selEnd = static_cast<uint16_t>(idx);
+  return true;
+}
+
+bool HighlightSelection::moveCursorLine(const bool down) {
+  if (rects.empty()) {
+    return false;
+  }
+  const WordRect& current = rects[anchor];
+  const int targetRow = static_cast<int>(current.row) + (down ? 1 : -1);
+  if (targetRow < 0 || targetRow >= static_cast<int>(std::min<uint16_t>(rowCount, 256))) {
+    return false;
+  }
+  const int best = closestInRow(static_cast<uint8_t>(targetRow), current.x + current.w / 2);
+  if (best < 0 || static_cast<uint16_t>(best) == anchor) {
+    return false;
+  }
+  anchor = selStart = selEnd = static_cast<uint16_t>(best);
+  pressLevel = 0;
+  return true;
+}
+
+void HighlightSelection::collapseToAnchor() {
+  selStart = selEnd = anchor;
+  pressLevel = 0;
+}
+
+int HighlightSelection::closestInRow(const uint8_t row, const int centerX) const {
+  int best = -1;
+  int bestDistance = INT_MAX;
+  for (size_t i = 0; i < rects.size(); i++) {
+    if (rects[i].row != row) {
+      continue;
+    }
+    const int distance = std::abs(rects[i].x + rects[i].w / 2 - centerX);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = static_cast<int>(i);
+    }
+  }
+  return best;
 }
 
 void HighlightSelection::applyForward(const uint8_t level) {

@@ -199,6 +199,10 @@ class EpubReaderActivity final : public Activity {
   // model exists only while the mode is active.
   std::unique_ptr<HighlightSelection> highlight;
   bool highlightIncrementalPending = false;
+  // false while the anchor cursor is being placed (phase 1 of CURSOR mode);
+  // true once Confirm plants it and the selection gestures take over.
+  // IMMEDIATE mode starts anchored (legacy single-phase flow).
+  bool highlightAnchored = false;
   bool showHighlightMessage = false;
   StrId highlightMessageId = StrId::STR_HIGHLIGHT_SAVED;
   unsigned long highlightMessageTime = 0UL;

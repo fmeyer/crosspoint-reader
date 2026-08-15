@@ -300,6 +300,11 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
 #endif
                           },
                           "longPressMenuFunction", StrId::STR_CAT_CONTROLS),
+#if CROSSPOINT_HIGHLIGHT_EXPERIMENT
+        SettingInfo::Enum(StrId::STR_HIGHLIGHT_SELECTION, &CrossPointSettings::highlightSelectionMode,
+                          {StrId::STR_HL_MODE_CURSOR, StrId::STR_HL_MODE_IMMEDIATE}, "highlightSelectionMode",
+                          StrId::STR_CAT_CONTROLS),
+#endif
         SettingInfo::Enum(
             StrId::STR_SHORT_PWR_BTN, &CrossPointSettings::shortPwrBtn,
             {StrId::STR_IGNORE, StrId::STR_SLEEP, StrId::STR_PAGE_TURN, StrId::STR_FORCE_REFRESH, StrId::STR_FOOTNOTES},

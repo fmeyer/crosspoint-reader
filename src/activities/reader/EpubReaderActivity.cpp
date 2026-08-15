@@ -1713,7 +1713,8 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   if (highlight) {
     if (!highlight->isBuilt() && !highlight->wasBuildAttempted()) {
       highlight->buildFromPage(*page, renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop,
-                               SETTINGS.getReaderLineCompression());
+                               SETTINGS.getReaderLineCompression(),
+                               /*startAtCenter=*/!highlightAnchored);
     }
     if (highlight->isBuilt()) {
       highlight->paintCurrent(renderer);
@@ -2076,8 +2077,11 @@ void EpubReaderActivity::enterHighlightMode() {
   }
   LOG_DBG("ERS", "Entering highlight mode");
   highlightIncrementalPending = false;
+  // IMMEDIATE mode skips the anchor-picking phase: selection starts on the
+  // page's first word, single Confirm saves (the original flow).
+  highlightAnchored = SETTINGS.highlightSelectionMode == CrossPointSettings::HL_SELECT_IMMEDIATE;
   showBookmarkMessage = false;
-  requestUpdate();  // full render: builds the word model and paints the first word
+  requestUpdate();  // full render: builds the word model and paints the initial cursor
 }
 
 void EpubReaderActivity::exitHighlightMode() {
@@ -2100,6 +2104,17 @@ void EpubReaderActivity::handleHighlightModeInput() {
   }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+    if (highlightAnchored && SETTINGS.highlightSelectionMode == CrossPointSettings::HL_SELECT_CURSOR) {
+      // Phase 2 -> 1: drop the extension, go back to picking the anchor.
+      // A second Back (now in phase 1) exits the mode.
+      highlightAnchored = false;
+      highlight->collapseToAnchor();
+      if (highlight->isBuilt()) {
+        highlightIncrementalPending = true;
+        requestUpdate();
+      }
+      return;
+    }
     exitHighlightMode();
     return;
   }
@@ -2108,6 +2123,12 @@ void EpubReaderActivity::handleHighlightModeInput() {
     if (ignoreNextConfirmRelease) {
       // Release of the hold that entered the mode (hold-Confirm entry setting).
       ignoreNextConfirmRelease = false;
+      return;
+    }
+    if (!highlightAnchored) {
+      // Phase 1 -> 2: plant the anchor; the cursor word becomes the selection's
+      // fixed end and the page-turn gestures now extend/shrink from it.
+      highlightAnchored = true;
       return;
     }
     if (highlight->isBuilt() && section) {
@@ -2134,24 +2155,36 @@ void EpubReaderActivity::handleHighlightModeInput() {
     return;
   }
 
+  // Front Left/Right honor the same orientation-based swap as
+  // ReaderUtils::detectPageTurn.
+  const bool swapFront =
+      SETTINGS.frontButtonFollowOrientation && (SETTINGS.orientation == CrossPointSettings::INVERTED ||
+                                                SETTINGS.orientation == CrossPointSettings::LANDSCAPE_CCW);
+  const auto prevButton = swapFront ? MappedInputManager::Button::Right : MappedInputManager::Button::Left;
+  const auto nextButton = swapFront ? MappedInputManager::Button::Left : MappedInputManager::Button::Right;
+
   bool changed = false;
-  if (mappedInput.wasPressed(MappedInputManager::Button::PageForward)) {
+  if (!highlightAnchored) {
+    // Phase 1 (anchor picker): side buttons step the cursor word by word (rapid
+    // double-press hops a sentence); front buttons move it a line down/up.
+    if (mappedInput.wasPressed(MappedInputManager::Button::PageForward)) {
+      changed = highlight->onCursorPress(true);
+    } else if (mappedInput.wasPressed(MappedInputManager::Button::PageBack)) {
+      changed = highlight->onCursorPress(false);
+    } else if (mappedInput.wasPressed(nextButton)) {
+      changed = highlight->moveCursorLine(true);
+    } else if (mappedInput.wasPressed(prevButton)) {
+      changed = highlight->moveCursorLine(false);
+    }
+  } else if (mappedInput.wasPressed(MappedInputManager::Button::PageForward)) {
     changed = highlight->onSinglePress(true);
   } else if (mappedInput.wasPressed(MappedInputManager::Button::PageBack)) {
     changed = highlight->onSinglePress(false);
-  } else {
-    // Front Left/Right hop to the previous/next sentence start, honoring the same
-    // orientation-based swap as ReaderUtils::detectPageTurn.
-    const bool swapFront =
-        SETTINGS.frontButtonFollowOrientation && (SETTINGS.orientation == CrossPointSettings::INVERTED ||
-                                                  SETTINGS.orientation == CrossPointSettings::LANDSCAPE_CCW);
-    const auto prevButton = swapFront ? MappedInputManager::Button::Right : MappedInputManager::Button::Left;
-    const auto nextButton = swapFront ? MappedInputManager::Button::Left : MappedInputManager::Button::Right;
-    if (mappedInput.wasPressed(nextButton)) {
-      changed = highlight->sentenceHop(true);
-    } else if (mappedInput.wasPressed(prevButton)) {
-      changed = highlight->sentenceHop(false);
-    }
+  } else if (mappedInput.wasPressed(nextButton)) {
+    // Front Left/Right hop to the previous/next sentence start.
+    changed = highlight->sentenceHop(true);
+  } else if (mappedInput.wasPressed(prevButton)) {
+    changed = highlight->sentenceHop(false);
   }
   if (changed && highlight->isBuilt()) {
     highlightIncrementalPending = true;

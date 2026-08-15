@@ -145,6 +145,11 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     LONG_PRESS_MENU_FUNCTION_COUNT
   };
 
+  // Highlight-mode entry behavior (highlight experiment; hidden from settings UI when
+  // compiled out). CURSOR first picks a start word with a movable cursor; IMMEDIATE
+  // starts selecting from the page's first word right away (legacy flow).
+  enum HIGHLIGHT_SELECTION_MODE { HL_SELECT_CURSOR = 0, HL_SELECT_IMMEDIATE = 1, HIGHLIGHT_SELECTION_MODE_COUNT };
+
   // Hide battery percentage
   enum HIDE_BATTERY_PERCENTAGE { HIDE_NEVER = 0, HIDE_READER = 1, HIDE_ALWAYS = 2, HIDE_BATTERY_PERCENTAGE_COUNT };
 
@@ -251,6 +256,8 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // Long-press Confirm function in EPUB reader (cycles through LONG_PRESS_MENU_FUNCTION values).
   // Defaults to Disabled so shortcut-based bookmark toggling remains opt-in.
   uint8_t longPressMenuFunction = LP_MENU_DISABLED;
+  // Highlight-mode entry behavior (cycles through HIGHLIGHT_SELECTION_MODE values).
+  uint8_t highlightSelectionMode = HL_SELECT_CURSOR;
   // UI Theme
   uint8_t uiTheme = LYRA;
   // Sunlight fading compensation
