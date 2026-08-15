@@ -2091,6 +2091,14 @@ void EpubReaderActivity::exitHighlightMode() {
 }
 
 void EpubReaderActivity::handleHighlightModeInput() {
+  // The word model builds on the render task right after mode entry. Until it
+  // has published (wasBuildAttempted), touching the selection — or worse,
+  // resetting `highlight` via one of the exits below — races the builder and
+  // frees the object under it. Drop input during that short window.
+  if (!highlight->wasBuildAttempted()) {
+    return;
+  }
+
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     exitHighlightMode();
     return;

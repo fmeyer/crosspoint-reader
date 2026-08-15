@@ -20,6 +20,9 @@ class HighlightSelection {
   bool buildFromPage(const Page& page, const GfxRenderer& renderer, int fontId, int marginLeft, int marginTop,
                      float lineCompression);
   bool isBuilt() const { return !rects.empty(); }
+  // True only once buildFromPage has RETURNED (success or empty). The main loop
+  // must not operate on — or free — this object before then: the build runs on
+  // the render task.
   bool wasBuildAttempted() const { return buildTried; }
 
   // Collapse the selection to the first word of the next (forward) or previous

@@ -73,7 +73,10 @@ bool startsWithEmSpace(const char* word, const size_t len) {
 
 bool HighlightSelection::buildFromPage(const Page& page, const GfxRenderer& renderer, const int fontId,
                                        const int marginLeft, const int marginTop, const float lineCompression) {
-  buildTried = true;
+  // buildTried is set on the way OUT, never here: it runs on the render task
+  // while the main loop polls wasBuildAttempted(), and flipping it before the
+  // model is complete lets the loop conclude "attempted but empty" mid-build
+  // and free this object under the builder (use-after-free panic).
   rects.clear();
   textPool.clear();
   textOffset.clear();
@@ -103,6 +106,7 @@ bool HighlightSelection::buildFromPage(const Page& page, const GfxRenderer& rend
   if (wordTotal == 0 || wordTotal > MAX_WORDS || textBytes > MAX_TEXT_BYTES) {
     LOG_DBG("HLS", "Page not selectable (words=%u, bytes=%u)", static_cast<uint32_t>(wordTotal),
             static_cast<uint32_t>(textBytes));
+    buildTried = true;
     return false;
   }
 
@@ -166,6 +170,7 @@ bool HighlightSelection::buildFromPage(const Page& page, const GfxRenderer& rend
   hasPainted = false;
   pressLevel = 0;
   LOG_DBG("HLS", "Built %u word rects", static_cast<uint32_t>(rects.size()));
+  buildTried = true;  // last: publishes the completed model to the main loop
   return !rects.empty();
 }
 
