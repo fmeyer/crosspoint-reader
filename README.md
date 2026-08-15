@@ -1,7 +1,7 @@
 # CrossPoint test firmware — text highlight experiment
 
-**Version:** `1.3.0-dev-claude/branch-from-1-3-0-kicq4d-52afc2f`
-**Source:** branch [`claude/branch-from-1-3-0-kicq4d`](https://github.com/fmeyer/crosspoint-reader/tree/claude/branch-from-1-3-0-kicq4d) @ `52afc2f`
+**Version:** `1.3.0-dev-claude/branch-from-1-3-0-kicq4d-614237b`
+**Source:** branch [`claude/branch-from-1-3-0-kicq4d`](https://github.com/fmeyer/crosspoint-reader/tree/claude/branch-from-1-3-0-kicq4d) @ `614237b`
 **Build:** `pio run -e default` (debug build: serial logging on, `LOG_LEVEL=2`, `CROSSPOINT_HIGHLIGHT_EXPERIMENT=1`)
 
 Includes the 1.3.0 baseline, Portuguese hyphenation, and the experimental
@@ -69,3 +69,6 @@ Notes for this experiment build:
 
 > Rev 8: boot screen (and default sleep screen fallback) now shows the owner's
 > personal mark instead of the CrossPoint logo.
+
+> Rev 9: fixes the sideways boot logo from rev 8 (bitmaps must be stored
+> pre-rotated for the raw framebuffer copy).
