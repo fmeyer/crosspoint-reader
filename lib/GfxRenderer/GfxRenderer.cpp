@@ -1797,6 +1797,34 @@ bool GfxRenderer::copyRegionToBuffer(int lx, int ly, int lw, int lh, uint8_t* bu
   return true;
 }
 
+void GfxRenderer::invertRegion(const int lx, const int ly, const int lw, const int lh) const {
+  int x0, y0, x1, y1;
+  if (!logicalRectToPhysicalBounds(orientation, lx, ly, lw, lh, panelWidth, panelHeight, &x0, &y0, &x1, &y1)) {
+    return;
+  }
+  if (!frameBuffer) {
+    return;
+  }
+  const int byteX0 = x0 / 8;
+  const int byteX1 = x1 / 8;
+  // Partial first/last bytes must not invert pixels outside the rect (MSB first,
+  // matching drawPixel's bit layout).
+  const auto firstMask = static_cast<uint8_t>(0xFF >> (x0 % 8));
+  const auto lastMask = static_cast<uint8_t>(0xFF << (7 - x1 % 8));
+  for (int row = y0; row <= y1; row++) {
+    uint8_t* rowStart = frameBuffer + row * panelWidthBytes;
+    if (byteX0 == byteX1) {
+      rowStart[byteX0] ^= firstMask & lastMask;
+      continue;
+    }
+    rowStart[byteX0] ^= firstMask;
+    for (int b = byteX0 + 1; b < byteX1; b++) {
+      rowStart[b] = ~rowStart[b];
+    }
+    rowStart[byteX1] ^= lastMask;
+  }
+}
+
 bool GfxRenderer::copyBufferToRegion(int lx, int ly, int lw, int lh, const uint8_t* buf, size_t bufSize) const {
   int x0, y0, x1, y1;
   if (!logicalRectToPhysicalBounds(orientation, lx, ly, lw, lh, panelWidth, panelHeight, &x0, &y0, &x1, &y1)) {

@@ -141,6 +141,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     LP_MENU_DISABLED = 1,
     LP_MENU_BOOKMARK = 2,
     LP_MENU_DICTIONARY = 3,
+    LP_MENU_HIGHLIGHT = 4,  // highlight experiment; hidden from settings UI when compiled out
     LONG_PRESS_MENU_FUNCTION_COUNT
   };
 
@@ -154,6 +155,8 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     ORIENTATION_CHANGE = 2,
     LONG_PRESS_BUTTON_BEHAVIOR_COUNT
   };
+
+  // Hold-Confirm action while reading
 
   // UI Theme
   enum UI_THEME { CLASSIC = 0, LYRA = 1, LYRA_3_COVERS = 2, ROUNDEDRAFF = 3 };
