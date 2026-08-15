@@ -21,6 +21,8 @@ class EpubReaderMenuActivity final : public Activity {
     ROTATE_SCREEN,
     BOOKMARKS,
     TOGGLE_BOOKMARK,
+    HIGHLIGHT,
+    HIGHLIGHTS,
     SCREENSHOT,
     DISPLAY_QR,
     GO_HOME,
