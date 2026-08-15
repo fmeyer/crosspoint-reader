@@ -1,7 +1,7 @@
 # CrossPoint test firmware — text highlight experiment
 
-**Version:** `1.3.0-dev-claude/branch-from-1-3-0-kicq4d-6a0f971`
-**Source:** branch [`claude/branch-from-1-3-0-kicq4d`](https://github.com/fmeyer/crosspoint-reader/tree/claude/branch-from-1-3-0-kicq4d) @ `6a0f971`
+**Version:** `1.3.0-dev-claude/branch-from-1-3-0-kicq4d-52afc2f`
+**Source:** branch [`claude/branch-from-1-3-0-kicq4d`](https://github.com/fmeyer/crosspoint-reader/tree/claude/branch-from-1-3-0-kicq4d) @ `52afc2f`
 **Build:** `pio run -e default` (debug build: serial logging on, `LOG_LEVEL=2`, `CROSSPOINT_HIGHLIGHT_EXPERIMENT=1`)
 
 Includes the 1.3.0 baseline, Portuguese hyphenation, and the experimental
@@ -66,3 +66,6 @@ Notes for this experiment build:
 > Rev 7: saved highlights now render as baseline underlines instead of full
 > inversion — subtler, and anti-aliased text stays on for pages with highlights.
 > Live selection still uses inversion for clear feedback.
+
+> Rev 8: boot screen (and default sleep screen fallback) now shows the owner's
+> personal mark instead of the CrossPoint logo.
