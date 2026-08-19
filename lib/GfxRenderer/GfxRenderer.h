@@ -348,4 +348,7 @@ class GfxRenderer {
   bool copyRegionToBuffer(int logicalX, int logicalY, int logicalW, int logicalH, uint8_t* buf, size_t bufSize) const;
   bool copyBufferToRegion(int logicalX, int logicalY, int logicalW, int logicalH, const uint8_t* buf,
                           size_t bufSize) const;
+  // XOR-invert every pixel inside a logical (orientation-aware) rect, pixel-accurate
+  // at the byte edges. Self-inverse: applying it twice restores the original content.
+  void invertRegion(int logicalX, int logicalY, int logicalW, int logicalH) const;
 };

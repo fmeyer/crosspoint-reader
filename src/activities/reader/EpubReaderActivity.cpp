@@ -24,6 +24,7 @@
 #include "EpubReaderBookmarksActivity.h"
 #include "EpubReaderChapterSelectionActivity.h"
 #include "EpubReaderFootnotesActivity.h"
+#include "EpubReaderHighlightsActivity.h"
 #include "EpubReaderPercentSelectionActivity.h"
 #include "EpubReaderUtils.h"
 #include "KOReaderCredentialStore.h"
@@ -38,6 +39,7 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/BookmarkUtil.h"
+#include "util/HighlightUtil.h"
 #include "util/ScreenshotUtil.h"
 
 namespace {
@@ -328,6 +330,13 @@ void EpubReaderActivity::loop() {
     return;
   }
 
+#if CROSSPOINT_HIGHLIGHT_EXPERIMENT
+  if (highlight) {
+    handleHighlightModeInput();
+    return;
+  }
+#endif
+
   // Idle glyph prewarm for the likely next page (currentPage + 1). The scan
   // pass draws nothing (FCM scan mode suppresses pixels), so the displayed
   // framebuffer is untouched; endScanAndPrewarm loads only glyphs not already
@@ -486,6 +495,13 @@ void EpubReaderActivity::loop() {
     requestUpdate();
   }
 
+#if CROSSPOINT_HIGHLIGHT_EXPERIMENT
+  if (showHighlightMessage && (millis() - highlightMessageTime) >= ReaderUtils::BOOKMARK_MESSAGE_DURATION_MS) {
+    showHighlightMessage = false;
+    requestUpdate();
+  }
+#endif
+
   // While the end screen suggestion menu is showing it owns Confirm/Back/navigation
   // input. Anything it doesn't handle (e.g. long-press Back to the file browser) falls
   // through to the regular handlers below; page turns are absorbed by the end-of-book
@@ -557,6 +573,17 @@ void EpubReaderActivity::loop() {
           return;
         }
         break;
+#if CROSSPOINT_HIGHLIGHT_EXPERIMENT
+      case CrossPointSettings::LP_MENU_HIGHLIGHT:
+        // Hold ~0.4s starts text highlight selection on the current page.
+        if (mappedInput.getHeldTime() >= ReaderUtils::BOOKMARK_HOLD_MS && section && section->pageCount > 0 &&
+            !automaticPageTurnActive) {
+          ignoreNextConfirmRelease = true;  // The entry hold's release must not save-and-exit the mode
+          enterHighlightMode();
+          return;
+        }
+        break;
+#endif
       case CrossPointSettings::LP_MENU_DISABLED:
       default:
         break;
@@ -798,6 +825,22 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
   };
 
   switch (action) {
+    // Menu items only exist when the experiment flag is on; the cases stay
+    // unconditional so flag-off builds don't trip -Wswitch.
+    case EpubReaderMenuActivity::MenuAction::HIGHLIGHT:
+#if CROSSPOINT_HIGHLIGHT_EXPERIMENT
+      if (section && section->pageCount > 0 && !automaticPageTurnActive) {
+        enterHighlightMode();
+      }
+#endif
+      break;
+    case EpubReaderMenuActivity::MenuAction::HIGHLIGHTS:
+#if CROSSPOINT_HIGHLIGHT_EXPERIMENT
+      startActivityForResult(
+          std::make_unique<EpubReaderHighlightsActivity>(renderer, mappedInput, epub, epub->getPath()),
+          progressChangeResultHandler);
+#endif
+      break;
     case EpubReaderMenuActivity::MenuAction::SELECT_CHAPTER: {
       const int spineIdx = currentSpineIndex;
       const std::string path = epub->getPath();
@@ -1078,6 +1121,18 @@ void EpubReaderActivity::render(RenderLock&& lock) {
   if (!epub) {
     return;
   }
+
+#if CROSSPOINT_HIGHLIGHT_EXPERIMENT
+  // Selection-only change: the framebuffer still holds the rendered page, so
+  // XOR-invert the selection diff in place and push one fast refresh — no SD
+  // reload, no page re-render.
+  if (highlight && highlight->isBuilt() && highlightIncrementalPending) {
+    highlightIncrementalPending = false;
+    highlight->repaintDiff(renderer);
+    renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+    return;
+  }
+#endif
 
   const auto showPendingSyncSaveError = [this]() {
     if (!pendingSyncSaveError) return;
@@ -1503,6 +1558,12 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     GUI.drawPopup(renderer, bookmarkRemoved ? tr(STR_BOOKMARK_REMOVED) : tr(STR_BOOKMARK_ADDED));
   }
 
+#if CROSSPOINT_HIGHLIGHT_EXPERIMENT
+  if (showHighlightMessage) {
+    GUI.drawPopup(renderer, I18N.get(highlightMessageId));
+  }
+#endif
+
   if (showDictionaryMessage) {
     GUI.drawPopup(renderer, tr(STR_DICT_NO_DICT_SET));
   }
@@ -1580,6 +1641,78 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   scope.endScanAndPrewarm();
   const auto tPrewarm = millis();
 
+#if CROSSPOINT_HIGHLIGHT_EXPERIMENT
+  // Saved highlights render as baseline underlines whenever the page is drawn.
+  // Underlines are plain black draws, so they must be repainted inside every
+  // grayscale AA pass (via renderGrayscalePass below, like the EPUB UNDERLINE
+  // style which page->render re-draws each pass) — in exchange, AA can stay
+  // enabled on pages with saved highlights. Only live selection mode forces
+  // BW-only rendering, since its XOR inversion cannot survive the grayscale
+  // planes or the image double-refresh re-render.
+  std::vector<std::pair<uint16_t, uint16_t>> savedHighlightRanges;
+  HighlightSelection savedSelection;
+  if (epub && section) {
+    // Header-only scan first (no snippet strings): most pages have no
+    // highlights and pay only one cheap file pass per render.
+    std::vector<HighlightRecord> recordInfo;
+    HighlightUtil::loadChapterRecordInfo(epub->getPath(), static_cast<uint16_t>(currentSpineIndex), recordInfo);
+    const auto curPage = static_cast<uint16_t>(section->currentPage);
+    std::vector<size_t> candidates;  // chapter ordinals, matched below
+    for (size_t i = 0; i < recordInfo.size(); i++) {
+      const auto& rec = recordInfo[i];
+      uint16_t recPage = rec.pageIndex;
+      bool offsetResolved = false;
+      if (rec.hasOffset()) {
+        // Content anchor: immune to re-pagination, unlike the stored page number.
+        if (const auto p = section->getPageForVisibleTextOffset(rec.pageVisibleOffset)) {
+          recPage = *p;
+          offsetResolved = true;
+        }
+      }
+      // The offset anchors the record's original page *start*; after a layout
+      // change that page's content can spill a few pages further, so nearby
+      // following pages also try the snippet match below.
+      if (recPage == curPage || (offsetResolved && curPage > recPage && curPage <= recPage + 3)) {
+        if (candidates.empty()) {
+          candidates.reserve(4);
+        }
+        candidates.push_back(i);
+      }
+    }
+    if (!candidates.empty() && savedSelection.buildFromPage(*page, renderer, fontId, orientedMarginLeft,
+                                                            orientedMarginTop, SETTINGS.getReaderLineCompression())) {
+      std::vector<HighlightRecord> records;  // full read, snippets included (same ordinals)
+      HighlightUtil::loadChapterHighlights(epub->getPath(), static_cast<uint16_t>(currentSpineIndex), records);
+      savedHighlightRanges.reserve(std::min(candidates.size(), HighlightUtil::MAX_PAGE_HIGHLIGHTS));
+      for (const size_t ord : candidates) {
+        if (ord >= records.size()) {
+          break;
+        }
+        const auto& rec = records[ord];
+        uint16_t wordStart = rec.wordStart;
+        uint16_t wordEnd = rec.wordEnd;
+        // Stored indices are only trusted when the record's own page number
+        // still matches (layout unchanged); otherwise the snippet decides.
+        if (savedSelection.resolveSnippet(rec.snippet, wordStart, wordEnd, rec.pageIndex == curPage)) {
+          savedHighlightRanges.emplace_back(wordStart, wordEnd);
+          if (savedHighlightRanges.size() >= HighlightUtil::MAX_PAGE_HIGHLIGHTS) {
+            break;
+          }
+        }
+      }
+    }
+  }
+  const auto paintSavedHighlights = [&] {
+    if (savedSelection.isBuilt()) {
+      savedSelection.underlineRanges(renderer, savedHighlightRanges);
+    }
+  };
+  const bool suppressAA = highlightModeActive();
+#else
+  constexpr bool suppressAA = false;
+  const auto paintSavedHighlights = [] {};
+#endif
+
   const bool pageHasImages = page->hasImages();
   const bool pageHasImagesNeedingDecode = pageHasImages && page->hasImagesNeedingDecode();
   const bool manualRefreshPending = forcedRefreshPending;
@@ -1590,8 +1723,8 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   // retained frame after a silent restart (for example, when returning from
   // KOReader sync), leaving the old UI mixed with the image.
   const bool cleanImageBasePending = manualRefreshPending || pagesUntilFullRefresh <= 1;
-  const bool needsTextGrayscale = SETTINGS.textAntiAliasing;
-  const bool needsAnyGrayscale = needsTextGrayscale || pageHasImages;
+  const bool needsTextGrayscale = SETTINGS.textAntiAliasing && !suppressAA;
+  const bool needsAnyGrayscale = (needsTextGrayscale || pageHasImages) && !suppressAA;
   const bool tiledGrayscale = needsAnyGrayscale && renderer.supportsStripGrayscale();
   // Whole-plane buffering only pays when the BW refresh genuinely runs async
   // underneath it; on blocking panels (X3) it would just spend ~50 KB for the
@@ -1605,6 +1738,7 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
     } else {
       page->renderImages(renderer, fontId, orientedMarginLeft, orientedMarginTop);
     }
+    paintSavedHighlights();
   };
 
   if (pageHasImagesNeedingDecode) {
@@ -1616,9 +1750,28 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
 
   page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop);
   renderStatusBar();
+
+#if CROSSPOINT_HIGHLIGHT_EXPERIMENT
+  paintSavedHighlights();
+  // Build the selection model from the live Page (it is freed at the end of this
+  // function) and invert the current selection into the fresh BW render.
+  if (highlight) {
+    if (!highlight->isBuilt() && !highlight->wasBuildAttempted()) {
+      highlight->buildFromPage(*page, renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop,
+                               SETTINGS.getReaderLineCompression(),
+                               /*startAtCenter=*/!highlightAnchored);
+    }
+    if (highlight->isBuilt()) {
+      highlight->paintCurrent(renderer);
+    }
+  }
+#endif
   const auto tBwRender = millis();
 
-  if (pageHasImages) {
+  // While highlight selection is active the double-FAST image pipeline would
+  // re-render the page over the XOR-inverted selection; take the plain refresh
+  // path instead (suppressAA also disables the grayscale passes below).
+  if (pageHasImages && !suppressAA) {
     // Double FAST_REFRESH with selective image blanking (pablohc's technique):
     // HALF_REFRESH sets particles too firmly for the grayscale LUT to adjust.
     // Instead, blank only the image area and do two fast refreshes.
@@ -1637,6 +1790,7 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
       // Re-render page content to restore images into the blanked area
       // Status bar is not re-rendered here to avoid reading stale dynamic values (e.g. battery %)
       page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop);
+      paintSavedHighlights();
       renderer.displayBuffer(HalDisplay::FAST_REFRESH);
     } else {
       renderer.displayBuffer(HalDisplay::HALF_REFRESH);
@@ -1859,7 +2013,19 @@ void EpubReaderActivity::renderStatusBar() const {
   int textYOffset = 0;
   const auto sb = SETTINGS.statusBarSpec();
 
-  if (automaticPageTurnActive) {
+#if CROSSPOINT_HIGHLIGHT_EXPERIMENT
+  // Highlight mode hijacks the title (same precedent as auto page turn) so the
+  // status bar names the current phase: picking the start word vs. selecting.
+  const bool highlightTitle = highlightModeActive();
+#else
+  constexpr bool highlightTitle = false;
+#endif
+
+  if (highlightTitle) {
+#if CROSSPOINT_HIGHLIGHT_EXPERIMENT
+    title = I18N.get(highlightAnchored ? StrId::STR_HIGHLIGHT : StrId::STR_SELECT_START);
+#endif
+  } else if (automaticPageTurnActive) {
     title = tr(STR_AUTO_TURN_ENABLED) + std::to_string(60 * 1000 / pageTurnDuration);
 
     // calculates textYOffset when rendering title in status bar
@@ -1958,6 +2124,197 @@ void EpubReaderActivity::loadCachedBookmarks() {
   BookmarkFile::load(epub->getPath(), cachedBookmarks);
   updateBookmarkFlag();
 }
+
+#if CROSSPOINT_HIGHLIGHT_EXPERIMENT
+void EpubReaderActivity::openDictionaryFromHighlight() {
+  if (SETTINGS.dictionaryName[0] == '\0') {
+    showDictionaryMessage = true;
+    dictionaryMessageTime = millis();
+    requestUpdate();
+    return;
+  }
+  if (!section || !highlight || !highlight->isBuilt()) {
+    return;
+  }
+  int anchorX = 0;
+  int anchorY = 0;
+  if (!highlight->anchorCenter(anchorX, anchorY)) {
+    return;
+  }
+  auto page = section->loadPage(section->currentPage);
+  if (!page) {
+    return;
+  }
+
+  // Word geometry must match render(): viewable-area margins plus screen margin.
+  int orientedMarginTop, orientedMarginRight, orientedMarginBottom, orientedMarginLeft;
+  renderer.getOrientedViewableTRBL(&orientedMarginTop, &orientedMarginRight, &orientedMarginBottom,
+                                   &orientedMarginLeft);
+  orientedMarginTop += SETTINGS.screenMargin;
+  orientedMarginLeft += SETTINGS.screenMargin;
+
+  startActivityForResult(
+      std::make_unique<DictionaryWordSelectActivity>(renderer, mappedInput, std::move(page), orientedMarginLeft,
+                                                     orientedMarginTop, anchorX, anchorY, /*lookupOnEnter=*/true),
+      [this](const ActivityResult&) {
+        // The lookup activity consumed the triggering hold's release; the next
+        // Confirm release is a fresh plant/save again.
+        ignoreNextConfirmRelease = false;
+        requestUpdate();
+      });
+}
+
+void EpubReaderActivity::enterHighlightMode() {
+  highlight = makeUniqueNoThrow<HighlightSelection>();
+  if (!highlight) {
+    LOG_ERR("ERS", "OOM: HighlightSelection");
+    return;
+  }
+  LOG_DBG("ERS", "Entering highlight mode");
+  highlightIncrementalPending = false;
+  // IMMEDIATE mode skips the anchor-picking phase: selection starts on the
+  // page's first word, single Confirm saves (the original flow).
+  highlightAnchored = SETTINGS.highlightSelectionMode == CrossPointSettings::HL_SELECT_IMMEDIATE;
+  showBookmarkMessage = false;
+  requestUpdate();  // full render: builds the word model and paints the initial cursor
+}
+
+void EpubReaderActivity::exitHighlightMode() {
+  LOG_DBG("ERS", "Exiting highlight mode");
+  highlight.reset();
+  highlightIncrementalPending = false;
+  // The mode accumulates FAST_REFRESH inversions; force a HALF_REFRESH on the
+  // restore render to clear ghosting (and bring anti-aliasing back).
+  pagesUntilFullRefresh = 1;
+  requestUpdate();
+}
+
+void EpubReaderActivity::handleHighlightModeInput() {
+  // The word model builds on the render task right after mode entry. Until it
+  // has published (wasBuildAttempted), touching the selection — or worse,
+  // resetting `highlight` via one of the exits below — races the builder and
+  // frees the object under it. Drop input during that short window.
+  if (!highlight->wasBuildAttempted()) {
+    return;
+  }
+
+  // Hold Confirm (either phase): dictionary lookup of the anchor/cursor word.
+  // Requires the entry hold to have fully released first, so a long mode-entry
+  // press can't fall straight through into a lookup.
+  constexpr unsigned long HIGHLIGHT_DICT_HOLD_MS = 700;
+  if (!ignoreNextConfirmRelease && highlight->isBuilt() && mappedInput.isPressed(MappedInputManager::Button::Confirm) &&
+      mappedInput.getHeldTime() >= HIGHLIGHT_DICT_HOLD_MS) {
+    // The hold's release must not plant/save. When the lookup activity launches
+    // it consumes the release itself; its result callback clears the flag.
+    ignoreNextConfirmRelease = true;
+    openDictionaryFromHighlight();
+    return;
+  }
+
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+    if (highlightAnchored && SETTINGS.highlightSelectionMode == CrossPointSettings::HL_SELECT_CURSOR) {
+      // Phase 2 -> 1: drop the extension, go back to picking the anchor.
+      // A second Back (now in phase 1) exits the mode.
+      highlightAnchored = false;
+      highlight->collapseToAnchor();
+      if (highlight->isBuilt()) {
+        highlightIncrementalPending = true;
+        requestUpdate();
+      }
+      return;
+    }
+    exitHighlightMode();
+    return;
+  }
+
+  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    if (ignoreNextConfirmRelease) {
+      // Release of the hold that entered the mode (hold-Confirm entry setting).
+      ignoreNextConfirmRelease = false;
+      return;
+    }
+    if (!highlightAnchored) {
+      // Phase 1 -> 2: plant the anchor; the cursor word becomes the selection's
+      // fixed end and the page-turn gestures now extend/shrink from it.
+      highlightAnchored = true;
+      return;
+    }
+    if (highlight->isBuilt() && section) {
+      // Content anchor for the record: the page's visible-codepoint offset makes
+      // it resolvable after any re-pagination. Captured at page load; the direct
+      // lookup is a rare fallback.
+      const uint32_t pageOffset =
+          currentPageVisibleOffset.has_value()
+              ? *currentPageVisibleOffset
+              : section->getVisibleTextOffsetForPage(static_cast<uint16_t>(section->currentPage))
+                    .value_or(HighlightRecord::NO_OFFSET);
+      if (HighlightUtil::isDuplicate(epub->getPath(), static_cast<uint16_t>(currentSpineIndex),
+                                     static_cast<uint16_t>(section->currentPage), highlight->selectionStart(),
+                                     highlight->selectionEnd())) {
+        highlightMessageId = StrId::STR_HIGHLIGHT_DUPLICATE;
+        showHighlightMessage = true;
+        highlightMessageTime = millis();
+      } else if (HighlightUtil::countChapterHighlights(epub->getPath(), static_cast<uint16_t>(currentSpineIndex)) >=
+                 HighlightUtil::MAX_CHAPTER_HIGHLIGHTS) {
+        highlightMessageId = StrId::STR_HIGHLIGHT_LIMIT_REACHED;
+        showHighlightMessage = true;
+        highlightMessageTime = millis();
+      } else if (HighlightUtil::saveHighlight(epub->getPath(), static_cast<uint16_t>(currentSpineIndex),
+                                              static_cast<uint16_t>(section->currentPage), pageOffset,
+                                              highlight->selectionStart(), highlight->selectionEnd(),
+                                              highlight->selectedText())) {
+        highlightMessageId = StrId::STR_HIGHLIGHT_SAVED;
+        showHighlightMessage = true;
+        highlightMessageTime = millis();
+      }
+    }
+    exitHighlightMode();
+    return;
+  }
+
+  // The entry render found nothing selectable (image-only or empty page).
+  if (highlight->wasBuildAttempted() && !highlight->isBuilt()) {
+    exitHighlightMode();
+    return;
+  }
+
+  // Front Left/Right honor the same orientation-based swap as
+  // ReaderUtils::detectPageTurn.
+  const bool swapFront =
+      SETTINGS.frontButtonFollowOrientation && (SETTINGS.orientation == CrossPointSettings::INVERTED ||
+                                                SETTINGS.orientation == CrossPointSettings::LANDSCAPE_CCW);
+  const auto prevButton = swapFront ? MappedInputManager::Button::Right : MappedInputManager::Button::Left;
+  const auto nextButton = swapFront ? MappedInputManager::Button::Left : MappedInputManager::Button::Right;
+
+  bool changed = false;
+  if (!highlightAnchored) {
+    // Phase 1 (anchor picker): side buttons step the cursor word by word (rapid
+    // double-press hops a sentence); front buttons move it a line down/up.
+    if (mappedInput.wasPressed(MappedInputManager::Button::PageForward)) {
+      changed = highlight->onCursorPress(true);
+    } else if (mappedInput.wasPressed(MappedInputManager::Button::PageBack)) {
+      changed = highlight->onCursorPress(false);
+    } else if (mappedInput.wasPressed(nextButton)) {
+      changed = highlight->moveCursorLine(true);
+    } else if (mappedInput.wasPressed(prevButton)) {
+      changed = highlight->moveCursorLine(false);
+    }
+  } else if (mappedInput.wasPressed(MappedInputManager::Button::PageForward)) {
+    changed = highlight->onSinglePress(true);
+  } else if (mappedInput.wasPressed(MappedInputManager::Button::PageBack)) {
+    changed = highlight->onSinglePress(false);
+  } else if (mappedInput.wasPressed(nextButton)) {
+    // Front Left/Right hop to the previous/next sentence start.
+    changed = highlight->sentenceHop(true);
+  } else if (mappedInput.wasPressed(prevButton)) {
+    changed = highlight->sentenceHop(false);
+  }
+  if (changed && highlight->isBuilt()) {
+    highlightIncrementalPending = true;
+    requestUpdate();
+  }
+}
+#endif  // CROSSPOINT_HIGHLIGHT_EXPERIMENT
 
 void EpubReaderActivity::addBookmark() {
   if (!section || !epub) {

@@ -8,6 +8,7 @@
 #include "BookmarkEntry.h"
 #include "EndOfBookOptions.h"
 #include "EpubReaderMenuActivity.h"
+#include "HighlightSelection.h"
 #include "ProgressMapper.h"
 #include "activities/Activity.h"
 
@@ -192,6 +193,27 @@ class EpubReaderActivity final : public Activity {
   // Footnote navigation
   void navigateToHref(const std::string& href, bool savePosition = false);
   void restoreSavedPosition();
+
+#if CROSSPOINT_HIGHLIGHT_EXPERIMENT
+  // Text highlight mode (experiment), entered from the reader menu. The selection
+  // model exists only while the mode is active.
+  std::unique_ptr<HighlightSelection> highlight;
+  bool highlightIncrementalPending = false;
+  // false while the anchor cursor is being placed (phase 1 of CURSOR mode);
+  // true once Confirm plants it and the selection gestures take over.
+  // IMMEDIATE mode starts anchored (legacy single-phase flow).
+  bool highlightAnchored = false;
+  bool showHighlightMessage = false;
+  StrId highlightMessageId = StrId::STR_HIGHLIGHT_SAVED;
+  unsigned long highlightMessageTime = 0UL;
+  void enterHighlightMode();
+  void exitHighlightMode();
+  void handleHighlightModeInput();
+  void openDictionaryFromHighlight();
+  bool highlightModeActive() const { return static_cast<bool>(highlight); }
+#else
+  static constexpr bool highlightModeActive() { return false; }
+#endif
 
  public:
   explicit EpubReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::unique_ptr<Epub> epub,
